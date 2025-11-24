@@ -1,6 +1,6 @@
-# proOS Phase 1
+# proOS
 
-proOS is a BIOS/MBR 32-bit hobby operating system. Phase 1 focuses on producing a custom boot chain and a minimal protected-mode kernel with a text shell.
+proOS is a BIOS/MBR 32-bit hobby operating system made by me!
 
 ## Repository Layout
 

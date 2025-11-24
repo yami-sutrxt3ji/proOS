@@ -6,7 +6,7 @@ proOS is a BIOS/MBR 32-bit hobby operating system. Phase 1 focuses on producing 
 
 - `boot/mbr.asm` – 512-byte MBR that loads the stage-2 loader
 - `boot/stage2.asm` – real-mode loader that switches to 32-bit protected mode
-- `kernel/` – kernel sources (entry stub, linker script, VGA, shell, RAMFS, interrupts, drivers)
+- `kernel/` – kernel sources (entry stub, linker script, VGA, shell, RAMFS, interrupts, drivers, scheduler)
 - `iso/make_iso.sh` – helper to wrap the raw image in an El Torito ISO
 - `Makefile` – builds the bootloader, kernel, and raw disk image
 - `tests.md` – manual tests for this phase
@@ -80,6 +80,8 @@ Alternatively, attach `proos.img` as a virtual floppy/RAW disk if your setup sup
    - `reboot`
    - `ls`
    - `cat <file>`
+   - `proc_list`
+6. Cooperative scheduler boots a user `init` process that spawns a user `echo_service` via syscalls and demonstrates IPC (`ECHO: Hello` banner at boot).
 
 ## Known Limitations
 

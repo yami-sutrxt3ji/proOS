@@ -59,11 +59,11 @@ ISR_NOERR 30
 ISR_NOERR 31
 
 isr_common_stub:
+    pusha
     pushl %ds
     pushl %es
     pushl %fs
     pushl %gs
-    pusha
 
     mov $0x10, %ax
     mov %ax, %ds
@@ -76,11 +76,11 @@ isr_common_stub:
     call isr_handler
     add $4, %esp
 
-    popa
     popl %gs
     popl %fs
     popl %es
     popl %ds
+    popa
     add $8, %esp
     iret
 

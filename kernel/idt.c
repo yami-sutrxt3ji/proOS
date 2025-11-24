@@ -58,6 +58,7 @@ extern void isr28(void);
 extern void isr29(void);
 extern void isr30(void);
 extern void isr31(void);
+extern void isr128(void);
 
 extern void irq0(void);
 extern void irq1(void);
@@ -155,6 +156,7 @@ void idt_init(void)
     idt_set_gate(45, (uint32_t)irq13, 0x08, 0x8E);
     idt_set_gate(46, (uint32_t)irq14, 0x08, 0x8E);
     idt_set_gate(47, (uint32_t)irq15, 0x08, 0x8E);
+    idt_set_gate(0x80, (uint32_t)isr128, 0x08, 0xEE);
 
     for (size_t i = 0; i < 32; ++i)
         isr_handlers[i] = NULL;
@@ -176,6 +178,21 @@ static const char *exception_messages[32] = {
     "Reserved", "Reserved", "Reserved", "Reserved"
 };
 
+static void vga_write_hex32(uint32_t value)
+{
+    char buffer[11];
+    buffer[0] = '0';
+    buffer[1] = 'x';
+    for (int i = 0; i < 8; ++i)
+    {
+        uint32_t shift = (uint32_t)((7 - i) * 4);
+        uint8_t nibble = (uint8_t)((value >> shift) & 0xF);
+        buffer[2 + i] = (char)(nibble < 10 ? ('0' + nibble) : ('A' + nibble - 10));
+    }
+    buffer[10] = '\0';
+    vga_write_line(buffer);
+}
+
 void isr_handler(struct regs *frame)
 {
     uint32_t int_no = frame->int_no;
@@ -192,6 +209,11 @@ void isr_handler(struct regs *frame)
         if (int_no < 32)
         {
             vga_write_line(exception_messages[int_no]);
+            vga_write("EIP: ");
+            vga_write_hex32(frame->eip);
+            vga_write(" CS: ");
+            vga_write_hex32(frame->cs);
+            vga_write_line("");
         }
         vga_write_line("System halted.");
         for (;;)

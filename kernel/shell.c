@@ -6,6 +6,7 @@
 #include "ramfs.h"
 #include "pit.h"
 #include "io.h"
+#include "proc.h"
 
 #define SHELL_PROMPT "proos> "
 #define INPUT_MAX 256
@@ -151,6 +152,7 @@ static void command_help(void)
     vga_write_line("  reboot - reset the machine");
     vga_write_line("  ls     - list RAMFS files");
     vga_write_line("  cat    - print file contents");
+    vga_write_line("  proc_list - list processes");
 }
 
 static void command_clear(void)
@@ -306,6 +308,11 @@ static void command_cat(const char *arg)
     vga_write_line(data);
 }
 
+static void command_proc_list(void)
+{
+    process_debug_list();
+}
+
 static void shell_execute(char *line)
 {
     line = (char *)skip_spaces(line);
@@ -336,6 +343,10 @@ static void shell_execute(char *line)
     else if (shell_str_starts_with(line, "cat"))
     {
         command_cat(line + 3);
+    }
+    else if (shell_str_equals(line, "proc_list"))
+    {
+        command_proc_list();
     }
     else if (shell_str_equals(line, "echo") || shell_str_starts_with(line, "echo "))
     {

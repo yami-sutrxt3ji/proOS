@@ -15,16 +15,23 @@ DISK_IMG := $(BUILD_DIR)/proos.img
 ISO_IMG := $(BUILD_DIR)/proos.iso
 
 KERNEL_OBJS := $(BUILD_DIR)/crt0.o \
+			   $(BUILD_DIR)/context.o \
 			   $(BUILD_DIR)/isr.o \
 			   $(BUILD_DIR)/irq.o \
+			   $(BUILD_DIR)/syscall_entry.o \
 			   $(BUILD_DIR)/idt.o \
 			   $(BUILD_DIR)/pic.o \
 			   $(BUILD_DIR)/pit.o \
+			   $(BUILD_DIR)/ipc.o \
+			   $(BUILD_DIR)/process.o \
 			   $(BUILD_DIR)/keyboard.o \
+			   $(BUILD_DIR)/syscall.o \
 			   $(BUILD_DIR)/kmain.o \
 			   $(BUILD_DIR)/vga.o \
 			   $(BUILD_DIR)/shell.o \
-			   $(BUILD_DIR)/ramfs.o
+			   $(BUILD_DIR)/ramfs.o \
+			   $(BUILD_DIR)/user/init.o \
+			   $(BUILD_DIR)/user/echo_service.o
 
 IMG_SECTORS := 2880
 STAGE2_SECTORS := 4
@@ -45,12 +52,19 @@ $(STAGE2): boot/stage2.asm | $(BUILD_DIR)
 	$(NASM) -f bin $< -o $@
 
 $(BUILD_DIR)/crt0.o: kernel/crt0.s | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/%.o: kernel/%.s | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) -m32 -c $< -o $@
+
+$(BUILD_DIR)/%.o: kernel/%.S | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
 	$(CC) -m32 -c $< -o $@
 
 $(BUILD_DIR)/%.o: kernel/%.c | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(KERNEL_ELF): $(KERNEL_OBJS) kernel/link.ld | $(BUILD_DIR)

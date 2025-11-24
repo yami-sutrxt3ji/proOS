@@ -53,19 +53,6 @@ make clean
 ```bash
 make run-qemu
 ```
-
-## Run in VirtualBox
-
-1. Convert the raw image to VDI:
-   ```bash
-   VBoxManage convertfromraw build/proos.img build/proos.vdi --format VDI
-   ```
-2. Create a new VirtualBox VM (Other/Unknown, 32-bit) with 32 MB RAM.
-3. Attach `build/proos.vdi` as the primary disk.
-4. Boot the VM.
-
-Alternatively, attach `proos.img` as a virtual floppy/RAW disk if your setup supports it.
-
 ## Expected Boot Flow
 
 1. `mbr.asm` loads `stage2.asm` into 0x7E00.
@@ -89,5 +76,3 @@ Alternatively, attach `proos.img` as a virtual floppy/RAW disk if your setup sup
 - `mem` reports hard-coded values.
 - RAMFS is a placeholder and stores no data.
 - `reboot` relies on controller reset and may fall through to an infinite `hlt` if unsupported.
-
-See `tests.md` for manual test guidance.

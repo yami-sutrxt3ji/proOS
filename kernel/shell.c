@@ -7,6 +7,8 @@
 #include "pit.h"
 #include "io.h"
 #include "proc.h"
+#include "fat16.h"
+#include "gfx.h"
 
 #define SHELL_PROMPT "proos> "
 #define INPUT_MAX 256
@@ -152,6 +154,9 @@ static void command_help(void)
     vga_write_line("  reboot - reset the machine");
     vga_write_line("  ls     - list RAMFS files");
     vga_write_line("  cat    - print file contents");
+    vga_write_line("  lsfs   - list FAT16 files");
+    vga_write_line("  catfs  - print FAT16 file");
+    vga_write_line("  gfx    - draw compositor demo");
     vga_write_line("  proc_list - list processes");
 }
 
@@ -313,6 +318,85 @@ static void command_proc_list(void)
     process_debug_list();
 }
 
+static void command_lsfs(void)
+{
+    if (!fat16_ready())
+    {
+        vga_write_line("FAT16 image not available.");
+        return;
+    }
+
+    char buffer[512];
+    int len = fat16_ls(buffer, sizeof(buffer));
+    if (len <= 0)
+    {
+        vga_write_line("(empty)");
+        return;
+    }
+
+    char *ptr = buffer;
+    while (*ptr)
+    {
+        char *line_start = ptr;
+        while (*ptr && *ptr != '\n')
+            ++ptr;
+        char saved = *ptr;
+        *ptr = '\0';
+        vga_write_line(line_start);
+        if (saved == '\n')
+            ++ptr;
+    }
+}
+
+static void command_catfs(const char *arg)
+{
+    if (!fat16_ready())
+    {
+        vga_write_line("FAT16 image not available.");
+        return;
+    }
+
+    const char *name_ptr = skip_spaces(arg);
+    if (*name_ptr == '\0')
+    {
+        vga_write_line("Usage: catfs <file>");
+        return;
+    }
+
+    char name[32];
+    size_t idx = 0;
+    while (name_ptr[idx] && name_ptr[idx] != ' ' && idx + 1 < sizeof(name))
+    {
+        name[idx] = name_ptr[idx];
+        ++idx;
+    }
+    name[idx] = '\0';
+
+    char data[768];
+    int read = fat16_read(name, data, sizeof(data));
+    if (read < 0)
+    {
+        vga_write_line("File not found.");
+        return;
+    }
+
+    vga_write_line(data);
+}
+
+static void command_gfx(void)
+{
+    if (!gfx_available())
+    {
+        vga_write_line("Graphics mode unavailable.");
+        return;
+    }
+
+    if (gfx_show_demo() == 0)
+        vga_write_line("Graphics demo drawn.");
+    else
+        vga_write_line("Graphics demo failed.");
+}
+
 static void shell_execute(char *line)
 {
     line = (char *)skip_spaces(line);
@@ -340,13 +424,25 @@ static void shell_execute(char *line)
     {
         command_ls();
     }
-    else if (shell_str_starts_with(line, "cat"))
+    else if (shell_str_equals(line, "catfs") || shell_str_starts_with(line, "catfs "))
+    {
+        command_catfs(line + 5);
+    }
+    else if (shell_str_equals(line, "cat") || shell_str_starts_with(line, "cat "))
     {
         command_cat(line + 3);
     }
     else if (shell_str_equals(line, "proc_list"))
     {
         command_proc_list();
+    }
+    else if (shell_str_equals(line, "lsfs"))
+    {
+        command_lsfs();
+    }
+    else if (shell_str_equals(line, "gfx"))
+    {
+        command_gfx();
     }
     else if (shell_str_equals(line, "echo") || shell_str_starts_with(line, "echo "))
     {

@@ -1,24 +1,30 @@
-# proOS Phase 1
+# proOS Phase 4
 
-proOS is a BIOS/MBR 32-bit hobby operating system. Phase 1 focuses on producing a custom boot chain and a minimal protected-mode kernel with a text shell.
+proOS is a BIOS/MBR 32-bit hobby operating system. Phase 4 layers a read-only FAT16 loader and a simple framebuffer compositor on top of the Phase 1–3 base (boot chain, interrupts, cooperative scheduler, and IPC).
 
 ## Repository Layout
 
 - `boot/mbr.asm` – 512-byte MBR that loads the stage-2 loader
-- `boot/stage2.asm` – real-mode loader that switches to 32-bit protected mode
+- `boot/stage2.asm` – real-mode loader that switches to 32-bit protected mode, loads the kernel and a FAT16 disk image, and passes VBE framebuffer info to the kernel
 - `kernel/` – kernel sources (entry stub, linker script, VGA, shell, RAMFS, interrupts, drivers, scheduler)
+- `kernel/vbe.c|h` – framebuffer driver and text console shim
+- `kernel/gfx.c|h` – minimal compositor and demo windows
+- `kernel/fat16.c|h` – in-memory FAT16 reader used for `lsfs`/`catfs`
+- `kernel/memory.c|h` – bump allocator backing window buffers
+- `kernel/fat16_image.c` – host helper that generates `build/fat16.img` for Stage 2 to load
 - `iso/make_iso.sh` – helper to wrap the raw image in an El Torito ISO
 - `Makefile` – builds the bootloader, kernel, and raw disk image
 - `tests.md` – manual tests for this phase
 
 ## Prerequisites
 
-Use WSL2 or another Unix-like environment on Windows. Install:
+Use MSYS2/WSL2 or another Unix-like environment on Windows. Install:
 
 - `nasm`
 - `i686-elf` cross toolchain (`i686-elf-gcc`, `i686-elf-ld`, `i686-elf-objcopy`)
 - `xorriso` (for ISO creation)
 - `qemu-system-i386` (optional, for quick testing)
+- `gcc` (host compiler used to build the FAT16 image helper)
 
 Ensure the cross toolchain binaries are on your `PATH`.
 
@@ -33,6 +39,7 @@ Outputs land in `build/`:
 - `proos.img` – bootable raw disk image
 - `kernel.elf` / `kernel.bin` – linked kernel artifacts
 - `mbr.bin`, `stage2.bin` – boot stages
+- `fat16.img` – 16 KB read-only FAT16 volume preloaded with `readme.txt`
 
 Create an ISO (requires `xorriso`):
 
@@ -82,12 +89,15 @@ Alternatively, attach `proos.img` as a virtual floppy/RAW disk if your setup sup
    - `cat <file>`
    - `proc_list`
 6. Cooperative scheduler boots a user `init` process that spawns a user `echo_service` via syscalls and demonstrates IPC (`ECHO: Hello` banner at boot).
+7. FAT16 image is copied to 0x00200000 and exposed via `lsfs` / `catfs` shell commands.
+8. When `gfx` is entered, the framebuffer compositor draws a demo desktop with windowed output; keyboard input remains routed to the shell.
 
 ## Known Limitations
 
-- Keyboard input uses simple polling; no interrupt-driven input yet.
+- FAT16 support is read-only, limited to 8.3 filenames in the root directory.
+- Framebuffer path assumes a 32-bpp VESA mode; systems without that support fall back to VGA text automatically.
 - `mem` reports hard-coded values.
-- RAMFS is a placeholder and stores no data.
+- RAMFS remains a stub for scratch files.
 - `reboot` relies on controller reset and may fall through to an infinite `hlt` if unsupported.
 
 See `tests.md` for manual test guidance.

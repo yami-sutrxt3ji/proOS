@@ -1,12 +1,6 @@
-<<<<<<< HEAD
-# proOS Phase 4
-
-proOS is a BIOS/MBR 32-bit hobby operating system. Phase 4 layers a read-only FAT16 loader and a simple framebuffer compositor on top of the Phase 1–3 base (boot chain, interrupts, cooperative scheduler, and IPC).
-=======
 # proOS
 
 proOS is a BIOS/MBR 32-bit hobby operating system made by me!
->>>>>>> 80a19d1816f8ad0bad606b77190988b27f912bc5
 
 ## Repository Layout
 

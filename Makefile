@@ -54,6 +54,7 @@ KERNEL_OBJS := $(BUILD_DIR)/crt0.o \
 		   $(BUILD_DIR)/shell.o \
 		   $(BUILD_DIR)/ramfs.o \
 		   $(BUILD_DIR)/devmgr.o \
+		   $(BUILD_DIR)/spinlock.o \
 		   $(BUILD_DIR)/user/init.o \
 		   $(BUILD_DIR)/user/echo_service.o \
 		   $(BUILD_DIR)/string.o \

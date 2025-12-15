@@ -1,6 +1,7 @@
 #include "interrupts.h"
 #include "pic.h"
 #include "vga.h"
+#include "pit.h"
 
 #include <stdint.h>
 #include <stddef.h>
@@ -24,7 +25,22 @@ static struct idt_entry idt_entries[256];
 static struct idt_ptr idt_descriptor;
 
 static isr_callback_t isr_handlers[32];
-static irq_callback_t irq_handlers[16];
+
+struct irq_shared_entry
+{
+    irq_shared_handler_t handler;
+    void *context;
+};
+
+struct irq_dispatch_slot
+{
+    irq_callback_t primary;
+    struct irq_shared_entry shared[IRQ_MAX_SHARED_HANDLERS];
+    struct irq_mailbox *mailboxes[IRQ_MAX_MAILBOX_SUBSCRIBERS];
+};
+
+static struct irq_dispatch_slot irq_table[IRQ_MAX_LINES];
+static spinlock_t irq_table_lock;
 
 extern void isr0(void);
 extern void isr1(void);
@@ -161,8 +177,18 @@ void idt_init(void)
     for (size_t i = 0; i < 32; ++i)
         isr_handlers[i] = NULL;
 
-    for (size_t i = 0; i < 16; ++i)
-        irq_handlers[i] = NULL;
+    spinlock_init(&irq_table_lock);
+    for (size_t i = 0; i < IRQ_MAX_LINES; ++i)
+    {
+        irq_table[i].primary = NULL;
+        for (size_t s = 0; s < IRQ_MAX_SHARED_HANDLERS; ++s)
+        {
+            irq_table[i].shared[s].handler = NULL;
+            irq_table[i].shared[s].context = NULL;
+        }
+        for (size_t m = 0; m < IRQ_MAX_MAILBOX_SUBSCRIBERS; ++m)
+            irq_table[i].mailboxes[m] = NULL;
+    }
 
     idt_flush((uint32_t)&idt_descriptor);
 }
@@ -229,9 +255,14 @@ void irq_handler(struct regs *frame)
     if (vector >= 32 && vector < 48)
     {
         uint8_t irq = (uint8_t)(vector - 32);
-        if (irq_handlers[irq])
+        struct irq_dispatch_slot *slot = &irq_table[irq];
+        if (slot->primary)
+            slot->primary(frame);
+
+        for (size_t i = 0; i < IRQ_MAX_SHARED_HANDLERS; ++i)
         {
-            irq_handlers[irq](frame);
+            if (slot->shared[i].handler)
+                slot->shared[i].handler(frame, slot->shared[i].context);
         }
 
         pic_send_eoi(irq);
@@ -248,7 +279,10 @@ void irq_install_handler(int irq, irq_callback_t handler)
 {
     if (irq >= 0 && irq < 16)
     {
-        irq_handlers[irq] = handler;
+        uint32_t flags;
+        spinlock_lock_irqsave(&irq_table_lock, &flags);
+        irq_table[irq].primary = handler;
+        spinlock_unlock_irqrestore(&irq_table_lock, flags);
         pic_clear_mask((uint8_t)irq);
     }
 }
@@ -257,7 +291,214 @@ void irq_uninstall_handler(int irq)
 {
     if (irq >= 0 && irq < 16)
     {
-        irq_handlers[irq] = NULL;
+        uint32_t flags;
+        spinlock_lock_irqsave(&irq_table_lock, &flags);
+        irq_table[irq].primary = NULL;
+        spinlock_unlock_irqrestore(&irq_table_lock, flags);
         pic_set_mask((uint8_t)irq);
+    }
+}
+
+int irq_register_shared_handler(int irq, irq_shared_handler_t handler, void *context)
+{
+    if (irq < 0 || irq >= (int)IRQ_MAX_LINES || !handler)
+        return -1;
+
+    uint32_t flags;
+    spinlock_lock_irqsave(&irq_table_lock, &flags);
+    struct irq_dispatch_slot *slot = &irq_table[irq];
+    for (size_t i = 0; i < IRQ_MAX_SHARED_HANDLERS; ++i)
+    {
+        if (slot->shared[i].handler == handler && slot->shared[i].context == context)
+        {
+            spinlock_unlock_irqrestore(&irq_table_lock, flags);
+            return 0;
+        }
+    }
+
+    for (size_t i = 0; i < IRQ_MAX_SHARED_HANDLERS; ++i)
+    {
+        if (!slot->shared[i].handler)
+        {
+            slot->shared[i].handler = handler;
+            slot->shared[i].context = context;
+            spinlock_unlock_irqrestore(&irq_table_lock, flags);
+            pic_clear_mask((uint8_t)irq);
+            return 0;
+        }
+    }
+
+    spinlock_unlock_irqrestore(&irq_table_lock, flags);
+    return -1;
+}
+
+int irq_unregister_shared_handler(int irq, irq_shared_handler_t handler, void *context)
+{
+    if (irq < 0 || irq >= (int)IRQ_MAX_LINES || !handler)
+        return -1;
+
+    uint32_t flags;
+    spinlock_lock_irqsave(&irq_table_lock, &flags);
+    struct irq_dispatch_slot *slot = &irq_table[irq];
+    for (size_t i = 0; i < IRQ_MAX_SHARED_HANDLERS; ++i)
+    {
+        if (slot->shared[i].handler == handler && slot->shared[i].context == context)
+        {
+            slot->shared[i].handler = NULL;
+            slot->shared[i].context = NULL;
+            spinlock_unlock_irqrestore(&irq_table_lock, flags);
+            return 0;
+        }
+    }
+    spinlock_unlock_irqrestore(&irq_table_lock, flags);
+    return -1;
+}
+
+void irq_mailbox_init(struct irq_mailbox *box)
+{
+    if (!box)
+        return;
+    box->head = 0;
+    box->tail = 0;
+    box->count = 0;
+    spinlock_init(&box->lock);
+}
+
+int irq_mailbox_subscribe(int irq, struct irq_mailbox *box)
+{
+    if (irq < 0 || irq >= (int)IRQ_MAX_LINES || !box)
+        return -1;
+
+    uint32_t flags;
+    spinlock_lock_irqsave(&irq_table_lock, &flags);
+    struct irq_dispatch_slot *slot = &irq_table[irq];
+    for (size_t i = 0; i < IRQ_MAX_MAILBOX_SUBSCRIBERS; ++i)
+    {
+        if (slot->mailboxes[i] == box)
+        {
+            spinlock_unlock_irqrestore(&irq_table_lock, flags);
+            return 0;
+        }
+    }
+
+    for (size_t i = 0; i < IRQ_MAX_MAILBOX_SUBSCRIBERS; ++i)
+    {
+        if (!slot->mailboxes[i])
+        {
+            slot->mailboxes[i] = box;
+            spinlock_unlock_irqrestore(&irq_table_lock, flags);
+            pic_clear_mask((uint8_t)irq);
+            return 0;
+        }
+    }
+
+    spinlock_unlock_irqrestore(&irq_table_lock, flags);
+    return -1;
+}
+
+int irq_mailbox_unsubscribe(int irq, struct irq_mailbox *box)
+{
+    if (irq < 0 || irq >= (int)IRQ_MAX_LINES || !box)
+        return -1;
+
+    uint32_t flags;
+    spinlock_lock_irqsave(&irq_table_lock, &flags);
+    struct irq_dispatch_slot *slot = &irq_table[irq];
+    for (size_t i = 0; i < IRQ_MAX_MAILBOX_SUBSCRIBERS; ++i)
+    {
+        if (slot->mailboxes[i] == box)
+        {
+            slot->mailboxes[i] = NULL;
+            spinlock_unlock_irqrestore(&irq_table_lock, flags);
+            return 0;
+        }
+    }
+
+    spinlock_unlock_irqrestore(&irq_table_lock, flags);
+    return -1;
+}
+
+static void mailbox_push(struct irq_mailbox *box, const struct irq_event *event)
+{
+    if (!box || !event)
+        return;
+
+    spinlock_lock(&box->lock);
+    if (box->count >= IRQ_MAILBOX_CAPACITY)
+    {
+        box->head = (uint8_t)((box->head + 1) % IRQ_MAILBOX_CAPACITY);
+        --box->count;
+    }
+
+    box->entries[box->tail] = *event;
+    box->tail = (uint8_t)((box->tail + 1) % IRQ_MAILBOX_CAPACITY);
+    ++box->count;
+    spinlock_unlock(&box->lock);
+}
+
+int irq_mailbox_receive(struct irq_mailbox *box, struct irq_event *out)
+{
+    if (!box || !out)
+        return 0;
+
+    int result = 0;
+    spinlock_lock(&box->lock);
+    if (box->count > 0)
+    {
+        *out = box->entries[box->head];
+        box->head = (uint8_t)((box->head + 1) % IRQ_MAILBOX_CAPACITY);
+        --box->count;
+        result = 1;
+    }
+    spinlock_unlock(&box->lock);
+    return result;
+}
+
+int irq_mailbox_peek(struct irq_mailbox *box)
+{
+    if (!box)
+        return 0;
+
+    int count;
+    spinlock_lock(&box->lock);
+    count = box->count;
+    spinlock_unlock(&box->lock);
+    return count;
+}
+
+void irq_mailbox_flush(struct irq_mailbox *box)
+{
+    if (!box)
+        return;
+    spinlock_lock(&box->lock);
+    box->head = 0;
+    box->tail = 0;
+    box->count = 0;
+    spinlock_unlock(&box->lock);
+}
+
+void irq_dispatch_event(int irq, uint32_t data)
+{
+    if (irq < 0 || irq >= (int)IRQ_MAX_LINES)
+        return;
+
+    struct irq_mailbox *targets[IRQ_MAX_MAILBOX_SUBSCRIBERS];
+    for (size_t i = 0; i < IRQ_MAX_MAILBOX_SUBSCRIBERS; ++i)
+        targets[i] = NULL;
+
+    spinlock_lock(&irq_table_lock);
+    for (size_t i = 0; i < IRQ_MAX_MAILBOX_SUBSCRIBERS; ++i)
+        targets[i] = irq_table[irq].mailboxes[i];
+    spinlock_unlock(&irq_table_lock);
+
+    struct irq_event event;
+    event.irq = (uint8_t)irq;
+    event.data = data;
+    event.timestamp = (uint32_t)get_ticks();
+
+    for (size_t i = 0; i < IRQ_MAX_MAILBOX_SUBSCRIBERS; ++i)
+    {
+        if (targets[i])
+            mailbox_push(targets[i], &event);
     }
 }

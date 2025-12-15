@@ -64,6 +64,14 @@ static void buffer_push(char c)
     }
 }
 
+static void dispatch_scancode(uint8_t scancode, int release)
+{
+    uint32_t payload = (uint32_t)scancode;
+    if (release)
+        payload |= KB_EVENT_FLAG_RELEASE;
+    irq_dispatch_event(KB_IRQ_LINE, payload);
+}
+
 static char translate_scancode(uint8_t scancode)
 {
     if (scancode >= 128)
@@ -85,8 +93,9 @@ static void keyboard_irq_handler(struct regs *frame)
 
     if (scancode & 0x80)
     {
-        scancode &= 0x7F;
-        if (scancode == 0x2A || scancode == 0x36)
+        uint8_t code = (uint8_t)(scancode & 0x7F);
+        dispatch_scancode(code, 1);
+        if (code == 0x2A || code == 0x36)
             shift_active = 0;
         return;
     }
@@ -94,24 +103,30 @@ static void keyboard_irq_handler(struct regs *frame)
     if (scancode == 0x2A || scancode == 0x36)
     {
         shift_active = 1;
+        dispatch_scancode(scancode, 0);
         return;
     }
 
     if (scancode == 0x0E)
     {
         buffer_push('\b');
+        dispatch_scancode(scancode, 0);
         return;
     }
 
     if (scancode == 0x1C)
     {
         buffer_push('\n');
+        dispatch_scancode(scancode, 0);
         return;
     }
 
     char c = translate_scancode(scancode);
     if (c)
+    {
         buffer_push(c);
+        dispatch_scancode(scancode, 0);
+    }
 }
 
 void kb_init(void)

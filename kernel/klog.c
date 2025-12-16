@@ -1,5 +1,6 @@
 #include "klog.h"
 #include "string.h"
+#include "ipc.h"
 
 #ifndef CONFIG_KLOG_CAPACITY
 #error "CONFIG_KLOG_CAPACITY must be defined in config.h"
@@ -11,6 +12,7 @@ static size_t klog_head = 0;
 static uint32_t klog_sequence = 0;
 static int klog_current_level = CONFIG_KLOG_DEFAULT_LEVEL;
 static int klog_ready = 0;
+static int logger_channel_id = -1;
 
 static uint32_t save_and_cli(void)
 {
@@ -52,6 +54,39 @@ static void ensure_ready(void)
         klog_init();
 }
 
+struct klog_ipc_event
+{
+    uint32_t seq;
+    uint8_t level;
+    uint8_t reserved[3];
+    char text[CONFIG_KLOG_ENTRY_LEN];
+};
+
+static void klog_publish_channel(uint32_t seq, uint8_t level, const char *text)
+{
+    if (!ipc_is_initialized() || !text)
+        return;
+    if (logger_channel_id < 0)
+        logger_channel_id = ipc_get_service_channel(IPC_SERVICE_LOGGER);
+    if (logger_channel_id < 0)
+        return;
+
+    struct klog_ipc_event payload;
+    payload.seq = seq;
+    payload.level = level;
+    payload.reserved[0] = payload.reserved[1] = payload.reserved[2] = 0;
+
+    size_t i = 0;
+    while (text[i] && i + 1 < sizeof(payload.text))
+    {
+        payload.text[i] = text[i];
+        ++i;
+    }
+    payload.text[i] = '\0';
+
+    ipc_channel_send(logger_channel_id, 0, level, 0, &payload, sizeof(payload), 0);
+}
+
 void klog_set_level(int level)
 {
     ensure_ready();
@@ -82,22 +117,30 @@ void klog_emit(int level, const char *message)
     uint32_t flags = save_and_cli();
 
     struct klog_entry *slot = &klog_buffer[klog_head];
-    slot->seq = klog_sequence++;
-    slot->level = (uint8_t)((level >= KLOG_DEBUG && level <= KLOG_ERROR) ? level : KLOG_ERROR);
+    uint32_t seq_value = klog_sequence++;
+    slot->seq = seq_value;
+    uint8_t stored_level = (uint8_t)((level >= KLOG_DEBUG && level <= KLOG_ERROR) ? level : KLOG_ERROR);
+    slot->level = stored_level;
+
+    char text_copy[CONFIG_KLOG_ENTRY_LEN];
 
     size_t i = 0;
     while (message[i] && i + 1 < CONFIG_KLOG_ENTRY_LEN)
     {
         slot->text[i] = message[i];
+        text_copy[i] = message[i];
         ++i;
     }
     slot->text[i] = '\0';
+    text_copy[i] = '\0';
 
     klog_head = (klog_head + 1U) % CONFIG_KLOG_CAPACITY;
     if (klog_count < CONFIG_KLOG_CAPACITY)
         ++klog_count;
 
     restore_flags(flags);
+
+    klog_publish_channel(seq_value, stored_level, text_copy);
 }
 
 size_t klog_copy(struct klog_entry *out, size_t max_entries)

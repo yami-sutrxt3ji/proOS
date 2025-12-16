@@ -2,6 +2,7 @@
 
 #include "klog.h"
 #include "ramfs.h"
+#include "ipc.h"
 
 #include <stddef.h>
 
@@ -15,6 +16,46 @@ static struct device_entry device_table[DEVMGR_MAX_DEVICES];
 static size_t device_count = 0;
 static uint32_t next_device_id = 1;
 static struct device_node *root_device = NULL;
+static int devmgr_channel_id = -1;
+
+static size_t str_length(const char *s);
+static void str_copy(char *dst, size_t dst_cap, const char *src);
+
+enum devmgr_event_type
+{
+    DEVMGR_EVENT_REGISTER = 1,
+    DEVMGR_EVENT_UNREGISTER = 2
+};
+
+struct devmgr_event
+{
+    uint8_t action;
+    uint8_t reserved[3];
+    uint32_t device_id;
+    char name[32];
+    char type[32];
+};
+
+static void devmgr_send_event(uint8_t action, const struct device_node *node)
+{
+    if (!node)
+        return;
+    if (!ipc_is_initialized())
+        return;
+    if (devmgr_channel_id < 0)
+        devmgr_channel_id = ipc_get_service_channel(IPC_SERVICE_DEVMGR);
+    if (devmgr_channel_id < 0)
+        return;
+
+    struct devmgr_event payload;
+    payload.action = action;
+    payload.reserved[0] = payload.reserved[1] = payload.reserved[2] = 0;
+    payload.device_id = (uint32_t)node->id;
+    str_copy(payload.name, sizeof(payload.name), node->name);
+    str_copy(payload.type, sizeof(payload.type), node->type);
+
+    ipc_channel_send(devmgr_channel_id, 0, action, 0, &payload, sizeof(payload), 0);
+}
 
 static size_t str_length(const char *s)
 {
@@ -386,6 +427,7 @@ int devmgr_register_device(const struct device_descriptor *desc, struct device_n
         *out_node = slot;
 
     klog_info("devmgr: device registered");
+    devmgr_send_event(DEVMGR_EVENT_REGISTER, slot);
     return 0;
 }
 
@@ -414,6 +456,7 @@ int devmgr_unregister_device(const char *name)
 
         unpublish_device(node);
         detach_children(node, node->parent ? node->parent : root_device);
+        devmgr_send_event(DEVMGR_EVENT_UNREGISTER, node);
         release_slot(i);
         devmgr_refresh_ramfs();
         klog_info("devmgr: device unregistered");

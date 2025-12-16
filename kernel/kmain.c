@@ -13,6 +13,7 @@
 #include "klog.h"
 #include "module.h"
 #include "devmgr.h"
+#include "ipc.h"
 
 extern void shell_run(void);
 extern void user_init(void);
@@ -60,6 +61,8 @@ void kmain(void)
     klog_info("kernel: IDT configured");
     pic_init();
     klog_info("kernel: PIC configured");
+    ipc_system_init();
+    klog_info("kernel: IPC system ready");
     devmgr_init();
     klog_info("kernel: device manager ready");
     module_system_init();

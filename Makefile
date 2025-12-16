@@ -57,6 +57,7 @@ KERNEL_OBJS := $(BUILD_DIR)/crt0.o \
 		   $(BUILD_DIR)/spinlock.o \
 		   $(BUILD_DIR)/user/init.o \
 		   $(BUILD_DIR)/user/echo_service.o \
+		   $(BUILD_DIR)/user/logger.o \
 		   $(BUILD_DIR)/string.o \
 		   $(BUILD_DIR)/module.o \
 		   $(BUILD_DIR)/module_symbols.o

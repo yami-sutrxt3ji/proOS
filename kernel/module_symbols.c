@@ -3,6 +3,7 @@
 #include "klog.h"
 #include "ramfs.h"
 #include "proc.h"
+#include "ipc.h"
 #include "pit.h"
 #include "fat16.h"
 #include "keyboard.h"
@@ -17,7 +18,12 @@ static const struct kernel_symbol builtin_symbols[] = {
     { "ramfs_read", (uintptr_t)&ramfs_read },
     { "ramfs_write_file", (uintptr_t)&ramfs_write_file },
     { "ramfs_remove", (uintptr_t)&ramfs_remove },
-    { "ipc_send", (uintptr_t)&ipc_send },
+    { "ipc_channel_create", (uintptr_t)&ipc_channel_create },
+    { "ipc_channel_join", (uintptr_t)&ipc_channel_join },
+    { "ipc_channel_leave", (uintptr_t)&ipc_channel_leave },
+    { "ipc_channel_send", (uintptr_t)&ipc_channel_send },
+    { "ipc_channel_receive", (uintptr_t)&ipc_channel_receive },
+    { "ipc_get_service_channel", (uintptr_t)&ipc_get_service_channel },
     { "process_create", (uintptr_t)&process_create },
     { "get_ticks", (uintptr_t)&get_ticks },
     { "pit_init", (uintptr_t)&pit_init },

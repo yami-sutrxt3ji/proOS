@@ -1,4 +1,5 @@
 #include "proc.h"
+#include "ipc.h"
 #include "vga.h"
 #include "klog.h"
 
@@ -13,8 +14,44 @@ static struct process *current_process = NULL;
 static int current_index = -1;
 static int next_pid = 1;
 static int scheduler_active = 0;
+static int scheduler_channel_id = -1;
 
 static int int_to_string(int value, char *out);
+
+enum scheduler_event_type
+{
+    SCHED_EVENT_CREATE = 1,
+    SCHED_EVENT_EXIT = 2,
+    SCHED_EVENT_RECLAIM = 3
+};
+
+struct scheduler_event
+{
+    uint8_t action;
+    uint8_t state;
+    uint16_t reserved;
+    int32_t pid;
+    int32_t value;
+};
+
+static void scheduler_send_event(uint8_t action, int pid, int value, proc_state_t state)
+{
+    if (!ipc_is_initialized())
+        return;
+    if (scheduler_channel_id < 0)
+        scheduler_channel_id = ipc_get_service_channel(IPC_SERVICE_SCHEDULER);
+    if (scheduler_channel_id < 0)
+        return;
+
+    struct scheduler_event payload;
+    payload.action = action;
+    payload.state = (uint8_t)state;
+    payload.reserved = 0;
+    payload.pid = pid;
+    payload.value = value;
+
+    ipc_channel_send(scheduler_channel_id, 0, action, 0, &payload, sizeof(payload), 0);
+}
 
 static void log_process_event(const char *prefix, int pid)
 {
@@ -81,6 +118,8 @@ static struct process *alloc_process_slot(void)
         {
             zero_memory(&processes[i], sizeof(struct process));
             processes[i].state = PROC_UNUSED;
+            for (size_t slot = 0; slot < CONFIG_PROCESS_CHANNEL_SLOTS; ++slot)
+                processes[i].channel_slots[slot] = -1;
             return &processes[i];
         }
     }
@@ -118,9 +157,10 @@ void process_system_init(void)
         processes[i].pid = -1;
         processes[i].state = PROC_UNUSED;
         processes[i].stack_size = PROC_STACK_SIZE;
-        processes[i].queue.head = 0;
-        processes[i].queue.tail = 0;
-        processes[i].queue.count = 0;
+        processes[i].channel_count = 0;
+        processes[i].wait_channel = -1;
+        for (size_t slot = 0; slot < CONFIG_PROCESS_CHANNEL_SLOTS; ++slot)
+            processes[i].channel_slots[slot] = -1;
     }
 
     scheduler_ctx.esp = 0;
@@ -128,6 +168,8 @@ void process_system_init(void)
     current_index = -1;
     next_pid = 1;
     scheduler_active = 0;
+    if (ipc_is_initialized())
+        scheduler_channel_id = ipc_get_service_channel(IPC_SERVICE_SCHEDULER);
 }
 
 static int acquire_pid(void)
@@ -181,12 +223,14 @@ int process_create(void (*entry)(void), size_t stack_size)
     proc->pid = acquire_pid();
     proc->state = PROC_READY;
     proc->stack_size = stack_size;
-    proc->queue.head = 0;
-    proc->queue.tail = 0;
-    proc->queue.count = 0;
+    proc->channel_count = 0;
+    proc->wait_channel = -1;
+    for (size_t slot = 0; slot < CONFIG_PROCESS_CHANNEL_SLOTS; ++slot)
+        proc->channel_slots[slot] = -1;
     proc->exit_code = 0;
 
     log_process_event("process: created pid ", proc->pid);
+    scheduler_send_event(SCHED_EVENT_CREATE, proc->pid, 0, proc->state);
 
     return proc->pid;
 }
@@ -232,9 +276,12 @@ void process_exit(int code)
     if (!proc)
         return;
 
+    ipc_process_cleanup(proc);
+
     proc->exit_code = code;
     proc->state = PROC_ZOMBIE;
     log_process_event("process: exit pid ", proc->pid);
+    scheduler_send_event(SCHED_EVENT_EXIT, proc->pid, code, proc->state);
     context_switch(&proc->ctx, &scheduler_ctx);
 
     for (;;)
@@ -261,11 +308,19 @@ static void reclaim_zombie(struct process *proc)
     if (!proc || proc->state != PROC_ZOMBIE)
         return;
 
+    int pid = proc->pid;
+    int exit_code = proc->exit_code;
+
     proc->pid = -1;
     proc->state = PROC_UNUSED;
-    proc->queue.head = proc->queue.tail = proc->queue.count = 0;
+    for (size_t slot = 0; slot < CONFIG_PROCESS_CHANNEL_SLOTS; ++slot)
+        proc->channel_slots[slot] = -1;
+    proc->channel_count = 0;
+    proc->wait_channel = -1;
     proc->exit_code = 0;
     proc->ctx.esp = 0;
+
+    scheduler_send_event(SCHED_EVENT_RECLAIM, pid, exit_code, PROC_UNUSED);
 }
 
 void process_schedule(void)

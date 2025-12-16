@@ -3,6 +3,7 @@
 #include "proc.h"
 #include "vga.h"
 #include "spinlock.h"
+#include "ipc.h"
 
 #include "config.h"
 
@@ -101,18 +102,32 @@ static int32_t sys_send_handler(struct syscall_envelope *msg)
     if (msg->argc < 3)
         return -1;
 
-    int pid = (int)msg->args[0];
-    const char *buffer = (const char *)msg->args[1];
-    size_t len = (size_t)msg->args[2];
-    if (len == 0)
-        return 0;
-    if (!syscall_validate_user_buffer(buffer, len))
+    int channel_id = (int)msg->args[0];
+    struct ipc_message *user_message = (struct ipc_message *)(uintptr_t)msg->args[1];
+    uint32_t flags = msg->args[2];
+
+    if (!syscall_validate_user_buffer(user_message, sizeof(struct ipc_message)))
         return -1;
+
+    struct ipc_message local;
+    copy_from_user((char *)&local, (const char *)user_message, sizeof(struct ipc_message));
+
+    if (local.size > CONFIG_MSG_DATA_MAX)
+        return -1;
+
+    uint8_t data_buf[CONFIG_MSG_DATA_MAX];
+    if (local.size > 0)
+    {
+        if (!syscall_validate_user_buffer(local.data, local.size))
+            return -1;
+        copy_from_user((char *)data_buf, (const char *)local.data, local.size);
+    }
 
     struct process *sender = process_current();
     if (!sender)
         return -1;
-    return ipc_send(pid, sender->pid, buffer, len);
+
+    return ipc_channel_send(channel_id, sender->pid, local.header, local.type, (local.size > 0) ? data_buf : NULL, local.size, flags);
 }
 
 static int32_t sys_recv_handler(struct syscall_envelope *msg)
@@ -120,37 +135,122 @@ static int32_t sys_recv_handler(struct syscall_envelope *msg)
     if (msg->argc < 3)
         return -1;
 
-    char *buffer = (char *)msg->args[0];
-    size_t maxlen = (size_t)msg->args[1];
-    int *from_pid = (int *)msg->args[2];
+    int channel_id = (int)msg->args[0];
+    struct ipc_message *user_message = (struct ipc_message *)(uintptr_t)msg->args[1];
+    uint32_t flags = msg->args[2];
 
-    if (maxlen == 0)
+    if (!syscall_validate_user_buffer(user_message, sizeof(struct ipc_message)))
         return -1;
-    if (!syscall_validate_user_buffer(buffer, maxlen))
-        return -1;
-    if (from_pid && !syscall_validate_user_buffer(from_pid, sizeof(int)))
+
+    struct ipc_message request;
+    copy_from_user((char *)&request, (const char *)user_message, sizeof(struct ipc_message));
+
+    void *user_buffer = request.data;
+    size_t user_capacity = request.size;
+    if (user_buffer && user_capacity > 0 && !syscall_validate_user_buffer(user_buffer, user_capacity))
         return -1;
 
     struct process *proc = process_current();
     if (!proc)
         return -1;
 
-    for (;;)
-    {
-        struct message msg_buf;
-        if (ipc_receive(proc, &msg_buf))
-        {
-            size_t copy_len = (msg_buf.length < maxlen) ? msg_buf.length : (maxlen - 1);
-            for (size_t i = 0; i < copy_len; ++i)
-                copy_to_user(buffer + i, &msg_buf.data[i], 1);
-            copy_to_user(buffer + copy_len, "\0", 1);
-            if (from_pid)
-                copy_to_user((char *)from_pid, (const char *)&msg_buf.from_pid, sizeof(int));
-            return (int32_t)copy_len;
-        }
+    uint8_t data_buf[CONFIG_MSG_DATA_MAX];
+    struct ipc_message delivery;
 
-        process_block_current();
+    int rc = ipc_channel_receive(proc, channel_id, &delivery, (user_buffer && user_capacity > 0) ? data_buf : NULL, (user_buffer && user_capacity > 0) ? CONFIG_MSG_DATA_MAX : 0, flags);
+    if (rc <= 0)
+        return rc;
+
+    size_t copy_len = delivery.size;
+    if (copy_len > CONFIG_MSG_DATA_MAX)
+        copy_len = CONFIG_MSG_DATA_MAX;
+
+    if (user_buffer && user_capacity > 0)
+    {
+        size_t to_copy = (copy_len < user_capacity) ? copy_len : user_capacity;
+        if (to_copy > 0)
+            copy_to_user((char *)user_buffer, (const char *)data_buf, to_copy);
+        if (copy_len > user_capacity)
+            delivery.header |= IPC_MESSAGE_TRUNCATED;
+        delivery.size = (uint32_t)to_copy;
+        delivery.data = user_buffer;
     }
+    else
+    {
+        delivery.size = 0;
+        delivery.data = NULL;
+    }
+
+    copy_to_user((char *)user_message, (const char *)&delivery, sizeof(struct ipc_message));
+    return 1;
+}
+
+static int32_t sys_chan_create_handler(struct syscall_envelope *msg)
+{
+    if (msg->argc < 2)
+        return -1;
+
+    const char *name = (const char *)(uintptr_t)msg->args[0];
+    size_t name_len = (size_t)msg->args[1];
+    uint32_t flags = (msg->argc >= 3) ? msg->args[2] : 0;
+
+    char buffer[CONFIG_IPC_CHANNEL_NAME_MAX];
+    size_t copy_len = 0;
+
+    if (name && name_len > 0)
+    {
+        if (!syscall_validate_user_buffer(name, name_len))
+            return -1;
+        copy_len = (name_len < (CONFIG_IPC_CHANNEL_NAME_MAX - 1)) ? name_len : (CONFIG_IPC_CHANNEL_NAME_MAX - 1);
+        copy_from_user(buffer, name, copy_len);
+        buffer[copy_len] = '\0';
+    }
+    else
+    {
+        buffer[0] = '\0';
+    }
+
+    return ipc_channel_create((copy_len > 0) ? buffer : NULL, copy_len, flags);
+}
+
+static int32_t sys_chan_join_handler(struct syscall_envelope *msg)
+{
+    if (msg->argc < 1)
+        return -1;
+
+    int channel_id = (int)msg->args[0];
+    struct process *proc = process_current();
+    if (!proc)
+        return -1;
+    return ipc_channel_join(proc, channel_id);
+}
+
+static int32_t sys_chan_leave_handler(struct syscall_envelope *msg)
+{
+    if (msg->argc < 1)
+        return -1;
+
+    int channel_id = (int)msg->args[0];
+    struct process *proc = process_current();
+    if (!proc)
+        return -1;
+    return ipc_channel_leave(proc, channel_id);
+}
+
+static int32_t sys_chan_peek_handler(struct syscall_envelope *msg)
+{
+    if (msg->argc < 1)
+        return -1;
+    int channel_id = (int)msg->args[0];
+    return ipc_channel_peek(channel_id);
+}
+
+static int32_t sys_service_channel_handler(struct syscall_envelope *msg)
+{
+    if (msg->argc < 1)
+        return -1;
+    int service = (int)msg->args[0];
+    return ipc_get_service_channel((enum ipc_service_channel)service);
 }
 
 static int32_t sys_exit_handler(struct syscall_envelope *msg)
@@ -221,6 +321,11 @@ void syscall_init(void)
     syscall_register_handler(SYS_SEND, sys_send_handler, "sys_send");
     syscall_register_handler(SYS_RECV, sys_recv_handler, "sys_recv");
     syscall_register_handler(SYS_EXIT, sys_exit_handler, "sys_exit");
+    syscall_register_handler(SYS_CHAN_CREATE, sys_chan_create_handler, "sys_chan_create");
+    syscall_register_handler(SYS_CHAN_JOIN, sys_chan_join_handler, "sys_chan_join");
+    syscall_register_handler(SYS_CHAN_LEAVE, sys_chan_leave_handler, "sys_chan_leave");
+    syscall_register_handler(SYS_CHAN_PEEK, sys_chan_peek_handler, "sys_chan_peek");
+    syscall_register_handler(SYS_GET_SERVICE_CHANNEL, sys_service_channel_handler, "sys_get_service_channel");
 }
 
 void syscall_handler(struct regs *frame)

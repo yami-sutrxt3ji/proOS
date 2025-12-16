@@ -1,4 +1,5 @@
 #include "vbe.h"
+#include "config.h"
 #include "fb_font.h"
 #include "fat16.h"
 #include "memory.h"
@@ -7,8 +8,16 @@
 #include <stdint.h>
 #include "string.h"
 
-#define CONSOLE_COLUMNS 80
-#define CONSOLE_ROWS 25
+#ifndef CONFIG_CONSOLE_MAX_COLS
+#define CONFIG_CONSOLE_MAX_COLS 80
+#endif
+
+#ifndef CONFIG_CONSOLE_MAX_ROWS
+#define CONFIG_CONSOLE_MAX_ROWS 25
+#endif
+
+#define CONSOLE_COLUMNS CONFIG_CONSOLE_MAX_COLS
+#define CONSOLE_ROWS    CONFIG_CONSOLE_MAX_ROWS
 #define DEFAULT_FONT_WIDTH 8
 #define FONT_FILE_NAME "font.psf"
 #define FONT_BDF_FILE_NAME "font.bdf"

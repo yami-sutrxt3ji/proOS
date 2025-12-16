@@ -4,6 +4,7 @@
 #include "klog.h"
 #include "memory.h"
 #include "string.h"
+#include "ipc.h"
 
 #include <stdint.h>
 
@@ -16,10 +17,29 @@ static size_t module_count = 0;
 
 static struct kernel_symbol symbol_table[MODULE_MAX_SYMBOLS];
 static size_t symbol_count = 0;
+static int module_channel_id = -1;
+
+enum module_event_type
+{
+    MODULE_EVENT_LOADED = 1,
+    MODULE_EVENT_UNLOADED = 2,
+    MODULE_EVENT_INIT_FAILED = 3
+};
+
+struct module_event
+{
+    uint8_t action;
+    uint8_t flags;
+    uint16_t reserved;
+    int32_t result;
+    char name[32];
+    char version[32];
+};
 
 static void emit_log(int level, const char *prefix, const char *name);
 static int str_equals(const char *a, const char *b);
 static void zero_handle(module_handle_t *handle);
+static void module_send_event(uint8_t action, const module_handle_t *handle, int32_t result);
 
 static int module_name_in_use(const char *name)
 {
@@ -328,6 +348,28 @@ static void emit_log(int level, const char *prefix, const char *name)
     klog_emit(level, buffer);
 }
 
+static void module_send_event(uint8_t action, const module_handle_t *handle, int32_t result)
+{
+    if (!handle)
+        return;
+    if (!ipc_is_initialized())
+        return;
+    if (module_channel_id < 0)
+        module_channel_id = ipc_get_service_channel(IPC_SERVICE_MODULE_LOADER);
+    if (module_channel_id < 0)
+        return;
+
+    struct module_event payload;
+    payload.action = action;
+    payload.flags = (uint8_t)handle->meta.flags;
+    payload.reserved = 0;
+    payload.result = result;
+    str_copy(payload.name, sizeof(payload.name), handle->meta.name);
+    str_copy(payload.version, sizeof(payload.version), handle->meta.version);
+
+    ipc_channel_send(module_channel_id, 0, action, 0, &payload, sizeof(payload), 0);
+}
+
 static int load_module_internal(const char *label, const uint8_t *image, size_t size, int builtin)
 {
     if (!image || size < sizeof(Elf32_Ehdr))
@@ -440,6 +482,7 @@ static int load_module_internal(const char *label, const uint8_t *image, size_t 
 
     (void)label;
     emit_log(KLOG_INFO, "module: loaded ", handle->meta.name);
+    module_send_event(MODULE_EVENT_LOADED, handle, 0);
 
     if (handle->meta.autostart && handle->init)
     {
@@ -452,6 +495,7 @@ static int load_module_internal(const char *label, const uint8_t *image, size_t 
         else
         {
             emit_log(KLOG_ERROR, "module: init failed ", handle->meta.name);
+            module_send_event(MODULE_EVENT_INIT_FAILED, handle, rc);
         }
     }
 
@@ -511,6 +555,9 @@ void module_system_init(void)
     module_count = 0;
     symbol_count = 0;
 
+    if (ipc_is_initialized())
+        module_channel_id = ipc_get_service_channel(IPC_SERVICE_MODULE_LOADER);
+
     module_register_builtin_symbols();
     load_builtin_modules();
 }
@@ -537,6 +584,7 @@ int module_unload(const char *name)
         handle->meta.active = 0;
         handle->meta.initialized = 0;
         emit_log(KLOG_INFO, "module: unloaded ", handle->meta.name);
+        module_send_event(MODULE_EVENT_UNLOADED, handle, 0);
 
         size_t remaining = module_count - i - 1;
         if (remaining > 0)

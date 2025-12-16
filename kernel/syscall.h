@@ -12,6 +12,11 @@ enum syscall_number
     SYS_SEND = 3,
     SYS_RECV = 4,
     SYS_EXIT = 5,
+    SYS_CHAN_CREATE = 6,
+    SYS_CHAN_JOIN = 7,
+    SYS_CHAN_LEAVE = 8,
+    SYS_CHAN_PEEK = 9,
+    SYS_GET_SERVICE_CHANNEL = 10,
     SYS_DYNAMIC_BASE = 32
 };
 

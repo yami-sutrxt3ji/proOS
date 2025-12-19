@@ -1,6 +1,7 @@
 #include "pit.h"
 #include "io.h"
 #include "interrupts.h"
+#include "proc.h"
 
 #define PIT_CHANNEL0 0x40
 #define PIT_COMMAND 0x43
@@ -13,6 +14,7 @@ static void pit_irq_handler(struct regs *frame)
 {
     (void)frame;
     ++ticks;
+    process_scheduler_tick();
 }
 
 void pit_init(uint32_t frequency)

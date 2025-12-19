@@ -38,6 +38,11 @@ static inline int sys_spawn(void (*entry)(void), size_t stack_size)
     return (int)sys_call(SYS_SPAWN, 2, (uint32_t)(uintptr_t)entry, (uint32_t)stack_size, 0, 0);
 }
 
+static inline int sys_sleep(uint32_t ticks)
+{
+    return (int)sys_call(SYS_SLEEP, 1, ticks, 0, 0, 0);
+}
+
 static inline int sys_chan_create(const char *name, size_t name_len, uint32_t flags)
 {
     return (int)sys_call(SYS_CHAN_CREATE, 3, (uint32_t)(uintptr_t)name, (uint32_t)name_len, flags, 0);

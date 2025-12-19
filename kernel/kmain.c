@@ -14,9 +14,16 @@
 #include "module.h"
 #include "devmgr.h"
 #include "ipc.h"
+#include "pit.h"
 
 extern void shell_run(void);
 extern void user_init(void);
+
+static void shell_task(void)
+{
+    shell_run();
+    process_exit(0);
+}
 
 static void print_banner(void)
 {
@@ -61,6 +68,8 @@ void kmain(void)
     klog_info("kernel: IDT configured");
     pic_init();
     klog_info("kernel: PIC configured");
+    pit_init(250);
+    klog_info("kernel: PIT started");
     ipc_system_init();
     klog_info("kernel: IPC system ready");
     devmgr_init();
@@ -80,15 +89,12 @@ void kmain(void)
     {
         klog_info("kernel: init process spawned");
     }
+    if (process_create_kernel(shell_task, PROC_STACK_SIZE) < 0)
+        klog_error("kernel: failed to create shell thread");
+    else
+        klog_info("kernel: shell thread spawned");
     print_banner();
     __asm__ __volatile__("sti");
     klog_info("kernel: interrupts enabled");
     process_schedule();
-    klog_info("kernel: scheduler relinquished");
-    shell_run();
-
-    for (;;)
-    {
-        __asm__ __volatile__("hlt");
-    }
 }

@@ -17,6 +17,7 @@ enum syscall_number
     SYS_CHAN_LEAVE = 8,
     SYS_CHAN_PEEK = 9,
     SYS_GET_SERVICE_CHANNEL = 10,
+    SYS_SLEEP = 11,
     SYS_DYNAMIC_BASE = 32
 };
 

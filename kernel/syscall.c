@@ -97,6 +97,16 @@ static int32_t sys_spawn_handler(struct syscall_envelope *msg)
     return process_create(entry, stack_size);
 }
 
+static int32_t sys_sleep_handler(struct syscall_envelope *msg)
+{
+    if (msg->argc < 1)
+        return -1;
+
+    uint32_t ticks = msg->args[0];
+    process_sleep(ticks);
+    return 0;
+}
+
 static int32_t sys_send_handler(struct syscall_envelope *msg)
 {
     if (msg->argc < 3)
@@ -326,6 +336,7 @@ void syscall_init(void)
     syscall_register_handler(SYS_CHAN_LEAVE, sys_chan_leave_handler, "sys_chan_leave");
     syscall_register_handler(SYS_CHAN_PEEK, sys_chan_peek_handler, "sys_chan_peek");
     syscall_register_handler(SYS_GET_SERVICE_CHANNEL, sys_service_channel_handler, "sys_get_service_channel");
+    syscall_register_handler(SYS_SLEEP, sys_sleep_handler, "sys_sleep");
 }
 
 void syscall_handler(struct regs *frame)

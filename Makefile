@@ -84,7 +84,7 @@ $(EMBEDDED_FONT_OBJ): $(EMBEDDED_FONT) | $(BUILD_DIR)
 endif
 
 .PHONY: all clean run-qemu iso
-
+ 
 all: $(DISK_IMG)
 
 $(BUILD_DIR):

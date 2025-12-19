@@ -4,7 +4,7 @@
 
 #include "vga.h"
 #include "keyboard.h"
-#include "ramfs.h"
+#include "vfs.h"
 #include "pit.h"
 #include "io.h"
 #include "proc.h"
@@ -13,6 +13,7 @@
 #include "klog.h"
 #include "module.h"
 #include "memory.h"
+#include "vbe.h"
 
 #define SHELL_PROMPT "proOS >> "
 #define INPUT_MAX 256
@@ -108,6 +109,22 @@ static void trim_trailing_spaces(char *str)
     }
 }
 
+static const char *resolve_absolute_path(const char *input, char *scratch, size_t scratch_size)
+{
+    if (!input || !scratch || scratch_size < 2)
+        return NULL;
+    if (input[0] == '/')
+        return input;
+    size_t len = str_len(input);
+    if (len + 1 >= scratch_size)
+        return NULL;
+    scratch[0] = '/';
+    for (size_t i = 0; i < len; ++i)
+        scratch[i + 1] = input[i];
+    scratch[len + 1] = '\0';
+    return scratch;
+}
+
 static int parse_positive_int(const char *text, int *out_value)
 {
     if (!text || !out_value)
@@ -200,6 +217,72 @@ static void write_u64(uint64_t value, char *out)
     out[index] = '\0';
 }
 
+static void write_hex_ptr(uintptr_t value, char *out)
+{
+    static const char digits[] = "0123456789ABCDEF";
+    out[0] = '0';
+    out[1] = 'x';
+    size_t nibble_count = sizeof(uintptr_t) * 2u;
+    for (size_t i = 0; i < nibble_count; ++i)
+    {
+        size_t shift = (nibble_count - 1u - i) * 4u;
+        unsigned int nibble = (unsigned int)((value >> shift) & 0xFu);
+        out[2u + i] = digits[nibble];
+    }
+    out[2u + nibble_count] = '\0';
+}
+
+static void print_ptr_line(const char *label, uintptr_t value)
+{
+    char line[64];
+    char hex_buf[2u + sizeof(uintptr_t) * 2u + 1u];
+    write_hex_ptr(value, hex_buf);
+    size_t pos = 0;
+    buffer_append(line, &pos, sizeof(line), "  ");
+    buffer_append(line, &pos, sizeof(line), label);
+    buffer_append(line, &pos, sizeof(line), ": ");
+    buffer_append(line, &pos, sizeof(line), hex_buf);
+    line[pos] = '\0';
+    vga_write_line(line);
+}
+
+static void print_size_line(const char *label, size_t bytes)
+{
+    char line[128];
+    char value_buf[32];
+    write_u64((uint64_t)bytes, value_buf);
+    size_t pos = 0;
+    buffer_append(line, &pos, sizeof(line), "  ");
+    buffer_append(line, &pos, sizeof(line), label);
+    buffer_append(line, &pos, sizeof(line), ": ");
+    buffer_append(line, &pos, sizeof(line), value_buf);
+    buffer_append(line, &pos, sizeof(line), " bytes");
+
+    size_t kib = bytes / 1024u;
+    if (kib > 0)
+    {
+        char kib_buf[32];
+        write_u64((uint64_t)kib, kib_buf);
+        buffer_append(line, &pos, sizeof(line), " (" );
+        buffer_append(line, &pos, sizeof(line), kib_buf);
+        buffer_append(line, &pos, sizeof(line), " KiB");
+
+        size_t mib = bytes / (1024u * 1024u);
+        if (mib > 0)
+        {
+            char mib_buf[32];
+            write_u64((uint64_t)mib, mib_buf);
+            buffer_append(line, &pos, sizeof(line), ", ");
+            buffer_append(line, &pos, sizeof(line), mib_buf);
+            buffer_append(line, &pos, sizeof(line), " MiB");
+        }
+        buffer_append(line, &pos, sizeof(line), ")");
+    }
+
+    line[pos] = '\0';
+    vga_write_line(line);
+}
+
 static void command_help(void)
 {
     vga_write_line("Available commands:");
@@ -277,7 +360,15 @@ static void command_echo(char *args)
         data[i] = args[i];
     data[len++] = '\n';
 
-    if (ramfs_write(filename, data, len) < 0)
+    char path_buffer[VFS_MAX_PATH];
+    const char *target = resolve_absolute_path(filename, path_buffer, sizeof(path_buffer));
+    if (!target)
+    {
+        vga_write_line("Invalid path.");
+        return;
+    }
+
+    if (vfs_write(target, data, len) < 0)
         vga_write_line("Write failed.");
     else
         vga_write_line("OK");
@@ -285,10 +376,12 @@ static void command_echo(char *args)
 
 static void command_mem(void)
 {
-    vga_write_line("Memory info (stub):");
-    vga_write_line("  Total: 32 MB");
-    vga_write_line("  Used : 1 MB");
-    vga_write_line("  Free : 31 MB");
+    vga_write_line("Memory info:");
+    print_ptr_line("heap base", memory_heap_base());
+    print_ptr_line("heap limit", memory_heap_limit());
+    print_size_line("heap total", memory_total_bytes());
+    print_size_line("heap used", memory_used_bytes());
+    print_size_line("heap free", memory_free_bytes());
 
     uint64_t ticks = get_ticks();
     uint32_t centis = 0;
@@ -301,11 +394,57 @@ static void command_mem(void)
     centi_buf[1] = (char)('0' + (centis % 10U));
     centi_buf[2] = '\0';
 
-    vga_write("  uptime: ");
-    vga_write(sec_buf);
-    vga_write(".");
-    vga_write(centi_buf);
-    vga_write_line("s");
+    char uptime_line[64];
+    size_t pos = 0;
+    buffer_append(uptime_line, &pos, sizeof(uptime_line), "  uptime: ");
+    buffer_append(uptime_line, &pos, sizeof(uptime_line), sec_buf);
+    buffer_append(uptime_line, &pos, sizeof(uptime_line), ".");
+    buffer_append(uptime_line, &pos, sizeof(uptime_line), centi_buf);
+    buffer_append(uptime_line, &pos, sizeof(uptime_line), "s");
+    uptime_line[pos] = '\0';
+    vga_write_line(uptime_line);
+
+    const struct boot_info *info = boot_info_get();
+    if (info)
+    {
+        vga_write_line("Boot assets:");
+
+        if (info->fat_ptr != 0u && info->fat_size != 0u)
+        {
+            print_ptr_line("fat16 ptr", (uintptr_t)info->fat_ptr);
+            print_size_line("fat16 size", (size_t)info->fat_size);
+        }
+        else
+        {
+            vga_write_line("  fat16 image: unavailable");
+        }
+
+        if (info->magic == BOOT_INFO_MAGIC && info->fb_width && info->fb_height && info->fb_bpp)
+        {
+            char fb_line[96];
+            size_t fb_pos = 0;
+            char num_buf[32];
+            buffer_append(fb_line, &fb_pos, sizeof(fb_line), "  framebuffer: ");
+            write_u64((uint64_t)info->fb_width, num_buf);
+            buffer_append(fb_line, &fb_pos, sizeof(fb_line), num_buf);
+            buffer_append(fb_line, &fb_pos, sizeof(fb_line), "x");
+            write_u64((uint64_t)info->fb_height, num_buf);
+            buffer_append(fb_line, &fb_pos, sizeof(fb_line), num_buf);
+            buffer_append(fb_line, &fb_pos, sizeof(fb_line), "x");
+            write_u64((uint64_t)info->fb_bpp, num_buf);
+            buffer_append(fb_line, &fb_pos, sizeof(fb_line), num_buf);
+            buffer_append(fb_line, &fb_pos, sizeof(fb_line), "bpp");
+            fb_line[fb_pos] = '\0';
+            vga_write_line(fb_line);
+
+            if (info->fb_size)
+                print_size_line("framebuffer size", (size_t)info->fb_size);
+        }
+        else
+        {
+            vga_write_line("  framebuffer: text mode");
+        }
+    }
 }
 
 static void command_reboot(void)
@@ -325,7 +464,7 @@ static void command_reboot(void)
 static void command_ls(void)
 {
     char list[512];
-    int len = ramfs_list(list, sizeof(list));
+    int len = vfs_list("/", list, sizeof(list));
     if (len <= 0)
     {
         vga_write_line("(empty)");
@@ -355,7 +494,7 @@ static void command_cat(const char *arg)
         return;
     }
 
-    char name[RAMFS_MAX_NAME];
+    char name[VFS_NODE_NAME_MAX];
     size_t idx = 0;
     while (name_ptr[idx] && name_ptr[idx] != ' ' && idx + 1 < sizeof(name))
     {
@@ -364,8 +503,16 @@ static void command_cat(const char *arg)
     }
     name[idx] = '\0';
 
-    char data[RAMFS_MAX_FILE_SIZE];
-    int read = ramfs_read(name, data, sizeof(data));
+    char path_buffer[VFS_MAX_PATH];
+    const char *target = resolve_absolute_path(name, path_buffer, sizeof(path_buffer));
+    if (!target)
+    {
+        vga_write_line("Invalid path.");
+        return;
+    }
+
+    char data[VFS_INLINE_CAP];
+    int read = vfs_read(target, data, sizeof(data));
     if (read < 0)
     {
         vga_write_line("File not found.");

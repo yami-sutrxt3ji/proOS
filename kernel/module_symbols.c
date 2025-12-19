@@ -2,6 +2,7 @@
 
 #include "klog.h"
 #include "ramfs.h"
+#include "vfs.h"
 #include "proc.h"
 #include "ipc.h"
 #include "pit.h"
@@ -18,6 +19,11 @@ static const struct kernel_symbol builtin_symbols[] = {
     { "ramfs_read", (uintptr_t)&ramfs_read },
     { "ramfs_write_file", (uintptr_t)&ramfs_write_file },
     { "ramfs_remove", (uintptr_t)&ramfs_remove },
+    { "vfs_write", (uintptr_t)&vfs_write },
+    { "vfs_write_file", (uintptr_t)&vfs_write_file },
+    { "vfs_read", (uintptr_t)&vfs_read },
+    { "vfs_list", (uintptr_t)&vfs_list },
+    { "vfs_remove", (uintptr_t)&vfs_remove },
     { "ipc_channel_create", (uintptr_t)&ipc_channel_create },
     { "ipc_channel_join", (uintptr_t)&ipc_channel_join },
     { "ipc_channel_leave", (uintptr_t)&ipc_channel_leave },

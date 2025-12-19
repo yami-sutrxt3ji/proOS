@@ -1,7 +1,7 @@
 #include <stdint.h>
 
 #include "vga.h"
-#include "ramfs.h"
+#include "vfs.h"
 #include "interrupts.h"
 #include "pic.h"
 #include "proc.h"
@@ -45,8 +45,10 @@ void kmain(void)
     klog_init();
     klog_info("kernel: video initialized");
     klog_info("kernel: memory initialized");
-    ramfs_init();
-    klog_info("kernel: ramfs ready");
+    if (vfs_init() < 0)
+        klog_error("kernel: vfs initialization failed");
+    else
+        klog_info("kernel: vfs ready");
 
     const struct boot_info *info = boot_info_get();
     int fat_ok = 0;

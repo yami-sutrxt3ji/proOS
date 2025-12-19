@@ -4,7 +4,7 @@
 
 #include "fat16.h"
 #include "klog.h"
-#include "ramfs.h"
+#include "vfs.h"
 #include "vbe.h"
 
 MODULE_METADATA("fs", "0.2.0", MODULE_FLAG_AUTOSTART);
@@ -29,8 +29,8 @@ static void publish_directory_listing(void)
         return;
     }
 
-    if (ramfs_write("fat16.dir", listing, (size_t)written) < 0)
-        klog_warn("fs.module: ramfs_write fat16.dir failed");
+    if (vfs_write("/fat/list", listing, (size_t)written) < 0)
+        klog_warn("fs.module: vfs_write fat16.dir failed");
 }
 
 static void try_load_font(void)
@@ -42,8 +42,8 @@ static void try_load_font(void)
     }
 
     const char *note = "font: loaded from FAT16\n";
-    if (ramfs_write("font.status", note, local_strlen(note)) < 0)
-        klog_warn("fs.module: ramfs_write font.status failed");
+    if (vfs_write("/proc/font.status", note, local_strlen(note)) < 0)
+        klog_warn("fs.module: vfs_write font.status failed");
     else
         klog_info("fs.module: font loaded");
 }

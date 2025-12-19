@@ -5,7 +5,7 @@
 
 #include "klog.h"
 #include "pit.h"
-#include "ramfs.h"
+#include "vfs.h"
 
 MODULE_METADATA("time", "0.1.0", MODULE_FLAG_AUTOSTART);
 
@@ -75,9 +75,9 @@ int module_init(void)
 
     klog_emit(KLOG_INFO, message);
 
-    const char *file_name = "uptime.txt";
-    if (ramfs_write(file_name, message, local_strlen(message)) < 0)
-        klog_warn("time.module: ramfs_write failed");
+    const char *file_name = "/proc/uptime";
+    if (vfs_write_file(file_name, message, local_strlen(message)) < 0)
+        klog_warn("time.module: vfs_write_file failed");
 
     return 0;
 }

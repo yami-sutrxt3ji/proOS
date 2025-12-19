@@ -6,8 +6,7 @@
 #include "devmgr.h"
 #include "io.h"
 #include "klog.h"
-#include "ramfs.h"
-
+#include "vfs.h"
 MODULE_METADATA("rtc", "0.1.0", MODULE_FLAG_AUTOSTART);
 
 static uint8_t read_cmos(uint8_t reg)
@@ -138,7 +137,7 @@ int module_init(void)
     char snapshot[32];
     size_t written = 0;
     if (snapshot_timestamp(snapshot, sizeof(snapshot), &written) == 0)
-        ramfs_write_file("/dev/rtc0.now", snapshot, written);
+        vfs_write_file("/dev/rtc0.now", snapshot, written);
 
     return 0;
 }
@@ -146,5 +145,5 @@ int module_init(void)
 void module_exit(void)
 {
     devmgr_unregister_device("rtc0");
-    ramfs_remove("/dev/rtc0.now");
+    vfs_remove("/dev/rtc0.now");
 }

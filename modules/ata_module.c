@@ -5,7 +5,7 @@
 
 #include "devmgr.h"
 #include "klog.h"
-#include "ramfs.h"
+#include "vfs.h"
 
 MODULE_METADATA("ata", "0.1.0", MODULE_FLAG_AUTOSTART);
 
@@ -70,7 +70,7 @@ int module_init(void)
         return -1;
     }
 
-    ramfs_write_file("/dev/ata0.status", status, local_strlen(status));
+    vfs_write_file("/dev/ata0.status", status, local_strlen(status));
 
     return 0;
 }
@@ -78,5 +78,5 @@ int module_init(void)
 void module_exit(void)
 {
     devmgr_unregister_device("ata0");
-    ramfs_remove("/dev/ata0.status");
+    vfs_remove("/dev/ata0.status");
 }

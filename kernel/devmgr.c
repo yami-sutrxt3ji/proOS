@@ -1,7 +1,7 @@
 #include "devmgr.h"
 
 #include "klog.h"
-#include "ramfs.h"
+#include "vfs.h"
 #include "ipc.h"
 
 #include <stddef.h>
@@ -157,7 +157,7 @@ static void publish_device(const struct device_node *node)
     if (node->flags & DEVICE_FLAG_INTERNAL)
         return;
 
-    char path[RAMFS_MAX_NAME];
+    char path[VFS_NODE_NAME_MAX];
     const char prefix[] = "/dev/";
     size_t prefix_len = sizeof(prefix) - 1;
     size_t name_len = str_length(node->name);
@@ -234,7 +234,7 @@ static void publish_device(const struct device_node *node)
         w = sizeof(payload) - 1;
     payload[w] = '\0';
 
-    if (ramfs_write_file(path, payload, w) < 0)
+    if (vfs_write_file(path, payload, w) < 0)
         klog_warn("devmgr: failed to publish device node");
 }
 
@@ -247,7 +247,7 @@ static void unpublish_device(const struct device_node *node)
     if (node->flags & DEVICE_FLAG_INTERNAL)
         return;
 
-    char path[RAMFS_MAX_NAME];
+    char path[VFS_NODE_NAME_MAX];
     const char prefix[] = "/dev/";
     size_t prefix_len = sizeof(prefix) - 1;
     size_t name_len = str_length(node->name);
@@ -261,7 +261,7 @@ static void unpublish_device(const struct device_node *node)
         path[pos++] = node->name[i];
     path[pos] = '\0';
 
-    ramfs_remove(path);
+    vfs_remove(path);
 }
 
 static size_t device_depth(const struct device_node *node)
@@ -277,7 +277,7 @@ static size_t device_depth(const struct device_node *node)
 
 void devmgr_refresh_ramfs(void)
 {
-    char listing[RAMFS_MAX_FILE_SIZE];
+    char listing[VFS_INLINE_CAP];
     size_t pos = 0;
 
     const char header[] = "Device Tree\n";
@@ -327,7 +327,7 @@ void devmgr_refresh_ramfs(void)
         pos = sizeof(listing) - 1;
     listing[pos] = '\0';
 
-    if (ramfs_write_file("/dev/devices", listing, pos) < 0)
+    if (vfs_write_file("/dev/devices", listing, pos) < 0)
         klog_warn("devmgr: failed to publish device tree");
 }
 

@@ -44,3 +44,31 @@ void *kalloc_zero(size_t size)
 
     return ptr;
 }
+
+size_t memory_total_bytes(void)
+{
+    return HEAP_SIZE_BYTES;
+}
+
+size_t memory_used_bytes(void)
+{
+    return (size_t)(heap_ptr - HEAP_START_ADDR);
+}
+
+size_t memory_free_bytes(void)
+{
+    size_t used = memory_used_bytes();
+    if (used >= HEAP_SIZE_BYTES)
+        return 0;
+    return HEAP_SIZE_BYTES - used;
+}
+
+uintptr_t memory_heap_base(void)
+{
+    return (uintptr_t)HEAP_START_ADDR;
+}
+
+uintptr_t memory_heap_limit(void)
+{
+    return (uintptr_t)heap_end;
+}

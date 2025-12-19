@@ -1,14 +1,7 @@
 #include "ramfs.h"
 
-struct ramfs_entry
-{
-    int used;
-    char name[RAMFS_MAX_NAME];
-    size_t size;
-    char data[RAMFS_MAX_FILE_SIZE];
-};
-
-static struct ramfs_entry ramfs_files[RAMFS_MAX_FILES];
+static struct ramfs_volume root_volume;
+static int root_initialized = 0;
 
 static size_t str_len(const char *str)
 {
@@ -44,86 +37,90 @@ static void mem_copy(char *dst, const char *src, size_t len)
         dst[i] = src[i];
 }
 
-static struct ramfs_entry *find_file(const char *name)
+static struct ramfs_entry *find_file(struct ramfs_volume *volume, const char *name)
 {
+    if (!volume)
+        return NULL;
     for (size_t i = 0; i < RAMFS_MAX_FILES; ++i)
     {
-        if (ramfs_files[i].used && str_cmp(ramfs_files[i].name, name) == 0)
-            return &ramfs_files[i];
+        if (volume->files[i].used && str_cmp(volume->files[i].name, name) == 0)
+            return &volume->files[i];
     }
     return NULL;
 }
 
-static struct ramfs_entry *create_file(const char *name)
+static struct ramfs_entry *create_file(struct ramfs_volume *volume, const char *name)
 {
-    struct ramfs_entry *existing = find_file(name);
+    if (!volume)
+        return NULL;
+
+    struct ramfs_entry *existing = find_file(volume, name);
     if (existing)
         return existing;
 
     for (size_t i = 0; i < RAMFS_MAX_FILES; ++i)
     {
-        if (!ramfs_files[i].used)
+        if (!volume->files[i].used)
         {
-            ramfs_files[i].used = 1;
-            ramfs_files[i].size = 0;
-            str_copy(ramfs_files[i].name, name, RAMFS_MAX_NAME);
-            ramfs_files[i].data[0] = '\0';
-            return &ramfs_files[i];
+            volume->files[i].used = 1;
+            volume->files[i].size = 0;
+            str_copy(volume->files[i].name, name, RAMFS_MAX_NAME);
+            volume->files[i].data[0] = '\0';
+            return &volume->files[i];
         }
     }
     return NULL;
 }
 
-void ramfs_init(void)
+void ramfs_volume_init(struct ramfs_volume *volume)
 {
+    if (!volume)
+        return;
+
     for (size_t i = 0; i < RAMFS_MAX_FILES; ++i)
     {
-        ramfs_files[i].used = 0;
-        ramfs_files[i].name[0] = '\0';
-        ramfs_files[i].size = 0;
-        ramfs_files[i].data[0] = '\0';
+        volume->files[i].used = 0;
+        volume->files[i].name[0] = '\0';
+        volume->files[i].size = 0;
+        volume->files[i].data[0] = '\0';
     }
-
-    const char *welcome = "Welcome to proOS!";
-    ramfs_write("hello.txt", welcome, str_len(welcome));
-    ramfs_write("hello.txt", "\n", 1);
 }
 
-int ramfs_list(char *buffer, size_t buffer_size)
+int ramfs_volume_list(struct ramfs_volume *volume, char *buffer, size_t buffer_size)
 {
-    if (!buffer || buffer_size == 0)
+    if (!volume || !buffer || buffer_size == 0)
         return 0;
 
     size_t written = 0;
 
     for (size_t i = 0; i < RAMFS_MAX_FILES; ++i)
     {
-        if (!ramfs_files[i].used)
+        if (!volume->files[i].used)
             continue;
 
-        size_t name_len = str_len(ramfs_files[i].name);
+        size_t name_len = str_len(volume->files[i].name);
         if (written + name_len + 1 >= buffer_size)
             break;
 
         for (size_t j = 0; j < name_len; ++j)
-            buffer[written++] = ramfs_files[i].name[j];
+            buffer[written++] = volume->files[i].name[j];
 
         buffer[written++] = '\n';
     }
 
     if (written > 0)
-        --written; /* remove trailing newline */
+        --written;
 
     buffer[written] = '\0';
     return (int)written;
 }
 
-int ramfs_read(const char *name, char *out, size_t out_size)
+int ramfs_volume_read(struct ramfs_volume *volume, const char *name, char *out, size_t out_size)
 {
-    if (!name || !out || out_size == 0)
+    if (!volume || !name || !out || out_size == 0)
         return -1;
 
-    struct ramfs_entry *file = find_file(name);
+    struct ramfs_entry *file = find_file(volume, name);
     if (!file)
         return -1;
 
@@ -136,12 +133,12 @@ int ramfs_read(const char *name, char *out, size_t out_size)
     return (int)to_copy;
 }
 
-int ramfs_write(const char *name, const char *data, size_t length)
+int ramfs_volume_append(struct ramfs_volume *volume, const char *name, const char *data, size_t length)
 {
-    if (!name || !data || length == 0)
+    if (!volume || !name || !data || length == 0)
         return -1;
 
-    struct ramfs_entry *file = create_file(name);
+    struct ramfs_entry *file = create_file(volume, name);
     if (!file)
         return -1;
 
@@ -154,12 +151,12 @@ int ramfs_write(const char *name, const char *data, size_t length)
     return (int)length;
 }
 
-int ramfs_write_file(const char *name, const char *data, size_t length)
+int ramfs_volume_write(struct ramfs_volume *volume, const char *name, const char *data, size_t length)
 {
-    if (!name)
+    if (!volume || !name)
         return -1;
 
-    struct ramfs_entry *file = create_file(name);
+    struct ramfs_entry *file = create_file(volume, name);
     if (!file)
         return -1;
 
@@ -179,12 +176,12 @@ int ramfs_write_file(const char *name, const char *data, size_t length)
     return (int)length;
 }
 
-int ramfs_remove(const char *name)
+int ramfs_volume_remove(struct ramfs_volume *volume, const char *name)
 {
-    if (!name)
+    if (!volume || !name)
         return -1;
 
-    struct ramfs_entry *file = find_file(name);
+    struct ramfs_entry *file = find_file(volume, name);
     if (!file)
         return -1;
 
@@ -193,4 +190,49 @@ int ramfs_remove(const char *name)
     file->name[0] = '\0';
     file->data[0] = '\0';
     return 0;
+}
+
+struct ramfs_volume *ramfs_root_volume(void)
+{
+    if (!root_initialized)
+    {
+        ramfs_volume_init(&root_volume);
+        root_initialized = 1;
+    }
+    return &root_volume;
+}
+
+void ramfs_init(void)
+{
+    struct ramfs_volume *volume = ramfs_root_volume();
+    ramfs_volume_init(volume);
+
+    const char *welcome = "Welcome to proOS!";
+    ramfs_volume_append(volume, "hello.txt", welcome, str_len(welcome));
+    ramfs_volume_append(volume, "hello.txt", "\n", 1);
+}
+
+int ramfs_list(char *buffer, size_t buffer_size)
+{
+    return ramfs_volume_list(ramfs_root_volume(), buffer, buffer_size);
+}
+
+int ramfs_read(const char *name, char *out, size_t out_size)
+{
+    return ramfs_volume_read(ramfs_root_volume(), name, out, out_size);
+}
+
+int ramfs_write(const char *name, const char *data, size_t length)
+{
+    return ramfs_volume_append(ramfs_root_volume(), name, data, length);
+}
+
+int ramfs_write_file(const char *name, const char *data, size_t length)
+{
+    return ramfs_volume_write(ramfs_root_volume(), name, data, length);
+}
+
+int ramfs_remove(const char *name)
+{
+    return ramfs_volume_remove(ramfs_root_volume(), name);
 }

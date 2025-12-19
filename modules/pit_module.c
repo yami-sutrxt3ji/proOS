@@ -6,7 +6,7 @@
 #include "devmgr.h"
 #include "klog.h"
 #include "pit.h"
-#include "ramfs.h"
+#include "vfs.h"
 
 MODULE_METADATA("pit", "0.1.0", MODULE_FLAG_AUTOSTART);
 
@@ -76,7 +76,7 @@ int module_init(void)
     }
 
     const char *status = "pit: 100Hz\n";
-    ramfs_write_file("/dev/pit0.status", status, local_strlen(status));
+    vfs_write_file("/dev/pit0.status", status, local_strlen(status));
 
     return 0;
 }
@@ -84,5 +84,5 @@ int module_init(void)
 void module_exit(void)
 {
     devmgr_unregister_device("pit0");
-    ramfs_remove("/dev/pit0.status");
+    vfs_remove("/dev/pit0.status");
 }

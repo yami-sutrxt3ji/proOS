@@ -7,7 +7,7 @@
 #include "interrupts.h"
 #include "klog.h"
 #include "keyboard.h"
-#include "ramfs.h"
+#include "vfs.h"
 #include "syscall.h"
 
 MODULE_METADATA("ps2kbd", "0.1.0", MODULE_FLAG_AUTOSTART);
@@ -315,12 +315,12 @@ int module_init(void)
 
     const char *status = "keyboard: ready\n";
     size_t status_len = local_strlen(status);
-    ramfs_write_file("/dev/ps2kbd0.status", status, status_len);
+    vfs_write_file("/dev/ps2kbd0.status", status, status_len);
 
     char layout[512];
     int written = kb_dump_layout(layout, sizeof(layout));
     if (written > 0)
-        ramfs_write_file("/dev/ps2kbd0.map", layout, (size_t)written);
+        vfs_write_file("/dev/ps2kbd0.map", layout, (size_t)written);
 
     return 0;
 }
@@ -346,6 +346,6 @@ void module_exit(void)
         controller_created = 0;
     }
 
-    ramfs_remove("/dev/ps2kbd0.status");
-    ramfs_remove("/dev/ps2kbd0.map");
+    vfs_remove("/dev/ps2kbd0.status");
+    vfs_remove("/dev/ps2kbd0.map");
 }

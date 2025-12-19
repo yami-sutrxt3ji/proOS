@@ -4,7 +4,7 @@
 
 #include "klog.h"
 #include "keyboard.h"
-#include "ramfs.h"
+#include "vfs.h"
 
 MODULE_METADATA("legacy-input", "0.0.0", 0);
 

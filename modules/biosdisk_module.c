@@ -4,7 +4,7 @@
 
 #include "devmgr.h"
 #include "klog.h"
-#include "ramfs.h"
+#include "vfs.h"
 
 static size_t local_strlen(const char *s)
 {
@@ -61,7 +61,7 @@ int module_init(void)
     }
 
     const char *status = "biosdisk: stub driver\n";
-    ramfs_write_file("/dev/biosdisk0.status", status, local_strlen(status));
+    vfs_write_file("/dev/biosdisk0.status", status, local_strlen(status));
 
     return 0;
 }
@@ -69,5 +69,5 @@ int module_init(void)
 void module_exit(void)
 {
     devmgr_unregister_device("biosdisk0");
-    ramfs_remove("/dev/biosdisk0.status");
+    vfs_remove("/dev/biosdisk0.status");
 }

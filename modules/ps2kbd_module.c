@@ -78,6 +78,36 @@ static void process_pending_events(void)
     {
         uint8_t scancode = (uint8_t)(event.data & 0xFF);
         int release = (event.data & KB_EVENT_FLAG_RELEASE) ? 1 : 0;
+        int extended = (event.data & KB_EVENT_FLAG_EXTENDED) ? 1 : 0;
+
+        if (extended)
+        {
+            if (release)
+            {
+                fifo_push(event.data, 0, event.timestamp);
+                continue;
+            }
+
+            switch (scancode)
+            {
+                case 0x48:
+                    fifo_push(event.data, KB_KEY_ARROW_UP, event.timestamp);
+                    break;
+                case 0x50:
+                    fifo_push(event.data, KB_KEY_ARROW_DOWN, event.timestamp);
+                    break;
+                case 0x4B:
+                    fifo_push(event.data, KB_KEY_ARROW_LEFT, event.timestamp);
+                    break;
+                case 0x4D:
+                    fifo_push(event.data, KB_KEY_ARROW_RIGHT, event.timestamp);
+                    break;
+                default:
+                    fifo_push(event.data, 0, event.timestamp);
+                    break;
+            }
+            continue;
+        }
 
         if (scancode == 0x2A || scancode == 0x36)
         {

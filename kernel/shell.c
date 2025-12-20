@@ -13,12 +13,18 @@
 #include "klog.h"
 #include "module.h"
 #include "memory.h"
+#include "power.h"
 #include "devmgr.h"
 #include "debug.h"
 #include "vbe.h"
 
 #define SHELL_PROMPT "proOS >> "
 #define INPUT_MAX 256
+#define SHELL_HISTORY_CAPACITY 32
+
+static char shell_history[SHELL_HISTORY_CAPACITY][INPUT_MAX];
+static size_t shell_history_count = 0;
+static size_t shell_history_next = 0;
 
 static size_t str_len(const char *s)
 {
@@ -57,6 +63,41 @@ static int shell_str_equals(const char *a, const char *b)
             return 0;
     }
     return *a == *b;
+}
+
+static const char *history_get_latest(size_t offset)
+{
+    if (offset >= shell_history_count)
+        return NULL;
+    size_t index = (shell_history_next + SHELL_HISTORY_CAPACITY - 1u - offset) % SHELL_HISTORY_CAPACITY;
+    return shell_history[index];
+}
+
+static void history_store(const char *line)
+{
+    if (!line || line[0] == '\0')
+        return;
+
+    size_t len = str_len(line);
+    if (len == 0)
+        return;
+    if (len >= INPUT_MAX)
+        len = INPUT_MAX - 1u;
+
+    if (shell_history_count > 0)
+    {
+        size_t last_index = (shell_history_next + SHELL_HISTORY_CAPACITY - 1u) % SHELL_HISTORY_CAPACITY;
+        if (shell_str_equals(shell_history[last_index], line))
+            return;
+    }
+
+    for (size_t i = 0; i < len; ++i)
+        shell_history[shell_history_next][i] = line[i];
+    shell_history[shell_history_next][len] = '\0';
+
+    shell_history_next = (shell_history_next + 1u) % SHELL_HISTORY_CAPACITY;
+    if (shell_history_count < SHELL_HISTORY_CAPACITY)
+        ++shell_history_count;
 }
 
 static void buffer_append(char *dst, size_t *pos, size_t max, const char *text)
@@ -111,6 +152,30 @@ static void trim_trailing_spaces(char *str)
     }
 }
 
+static void shell_replace_input(char *buffer, size_t *len, size_t max_len, const char *text)
+{
+    if (!buffer || !len || !text || max_len == 0)
+        return;
+
+    while (*len > 0)
+    {
+        --(*len);
+        vga_backspace();
+    }
+
+    size_t copy = 0;
+    while (text[copy] && copy + 1 < max_len)
+    {
+        buffer[copy] = text[copy];
+        vga_write_char(text[copy]);
+        ++copy;
+    }
+
+    *len = copy;
+    if (*len < max_len)
+        buffer[*len] = '\0';
+}
+
 static const char *resolve_absolute_path(const char *input, char *scratch, size_t scratch_size)
 {
     if (!input || !scratch || scratch_size < 2)
@@ -157,6 +222,7 @@ static int parse_positive_int(const char *text, int *out_value)
 static size_t shell_read_line(char *buffer, size_t max_len)
 {
     size_t len = 0;
+    int history_pos = -1;
 
     while (1)
     {
@@ -167,13 +233,53 @@ static size_t shell_read_line(char *buffer, size_t max_len)
             continue;
         }
 
+        unsigned char uc = (unsigned char)c;
+
+        if (uc == (unsigned char)KB_KEY_ARROW_UP)
+        {
+            if (shell_history_count > 0)
+            {
+                if (history_pos + 1 < (int)shell_history_count)
+                    ++history_pos;
+                const char *entry = history_get_latest((size_t)history_pos);
+                if (entry)
+                    shell_replace_input(buffer, &len, max_len, entry);
+            }
+            continue;
+        }
+
+        if (uc == (unsigned char)KB_KEY_ARROW_DOWN)
+        {
+            if (shell_history_count > 0 && history_pos >= 0)
+            {
+                if (history_pos > 0)
+                {
+                    --history_pos;
+                    const char *entry = history_get_latest((size_t)history_pos);
+                    if (entry)
+                        shell_replace_input(buffer, &len, max_len, entry);
+                }
+                else
+                {
+                    history_pos = -1;
+                    shell_replace_input(buffer, &len, max_len, "");
+                }
+            }
+            continue;
+        }
+
+        if (uc == (unsigned char)KB_KEY_ARROW_LEFT || uc == (unsigned char)KB_KEY_ARROW_RIGHT)
+            continue;
+
         if (c == '\b')
         {
             if (len > 0)
             {
                 --len;
                 vga_backspace();
+                buffer[len] = '\0';
             }
+            history_pos = -1;
             continue;
         }
 
@@ -181,6 +287,7 @@ static size_t shell_read_line(char *buffer, size_t max_len)
         {
             vga_write_char('\n');
             buffer[len] = '\0';
+            history_pos = -1;
             return len;
         }
 
@@ -190,7 +297,9 @@ static size_t shell_read_line(char *buffer, size_t max_len)
         if (len + 1 < max_len)
         {
             buffer[len++] = c;
+            buffer[len] = '\0';
             vga_write_char(c);
+            history_pos = -1;
         }
     }
 }
@@ -1419,8 +1528,9 @@ static void command_shutdown(void)
     vga_write(centi_buf);
     vga_write_line("s");
 
-    vga_write_line("Shutdown requested (not implemented).");
-    klog_warn("shell: shutdown requested");
+    vga_write_line("Powering off...");
+    klog_info("shell: invoking power shutdown");
+    power_shutdown();
 }
 
 static void shell_execute(char *line)
@@ -1526,7 +1636,9 @@ void shell_run(void)
         vga_set_color(0xB, 0x0);
         vga_write(SHELL_PROMPT);
         vga_set_color(0x7, 0x0);
-        shell_read_line(buffer, sizeof(buffer));
+        size_t len = shell_read_line(buffer, sizeof(buffer));
+        if (len > 0)
+            history_store(buffer);
         shell_execute(buffer);
     }
 }

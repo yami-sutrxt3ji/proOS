@@ -12,6 +12,9 @@
 #include "devmgr.h"
 #include "interrupts.h"
 #include "syscall.h"
+#include "blockdev.h"
+#include "partition.h"
+#include "bios_fallback.h"
 
 static const struct kernel_symbol builtin_symbols[] = {
     { "klog_emit", (uintptr_t)&klog_emit },
@@ -59,7 +62,18 @@ static const struct kernel_symbol builtin_symbols[] = {
     { "syscall_register_handler", (uintptr_t)&syscall_register_handler },
     { "syscall_unregister_handler", (uintptr_t)&syscall_unregister_handler },
     { "syscall_validate_user_buffer", (uintptr_t)&syscall_validate_user_buffer },
-    { "syscall_validate_user_pointer", (uintptr_t)&syscall_validate_user_pointer }
+    { "syscall_validate_user_pointer", (uintptr_t)&syscall_validate_user_pointer },
+    { "blockdev_register", (uintptr_t)&blockdev_register },
+    { "blockdev_read", (uintptr_t)&blockdev_read },
+    { "blockdev_write", (uintptr_t)&blockdev_write },
+    { "blockdev_find", (uintptr_t)&blockdev_find },
+    { "blockdev_enumerate", (uintptr_t)&blockdev_enumerate },
+    { "blockdev_log_devices", (uintptr_t)&blockdev_log_devices },
+    { "partition_scan_device", (uintptr_t)&partition_scan_device },
+    { "partition_autoscan", (uintptr_t)&partition_autoscan },
+    { "bios_fallback_available", (uintptr_t)&bios_fallback_available },
+    { "bios_fallback_read", (uintptr_t)&bios_fallback_read },
+    { "bios_fallback_boot_drive", (uintptr_t)&bios_fallback_boot_drive }
 };
 
 void module_register_builtin_symbols(void)

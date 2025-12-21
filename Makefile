@@ -58,6 +58,10 @@ KERNEL_OBJS := $(BUILD_DIR)/crt0.o \
 		   $(BUILD_DIR)/ramfs.o \
 		   $(BUILD_DIR)/devmgr.o \
 		   $(BUILD_DIR)/spinlock.o \
+		   $(BUILD_DIR)/blockdev.o \
+		   $(BUILD_DIR)/partition.o \
+		   $(BUILD_DIR)/bios_fallback.o \
+		   $(BUILD_DIR)/bios_thunk.o \
 		   $(BUILD_DIR)/user/init.o \
 		   $(BUILD_DIR)/user/echo_service.o \
 		   $(BUILD_DIR)/user/logger.o \

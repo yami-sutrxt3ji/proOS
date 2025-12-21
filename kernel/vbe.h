@@ -25,6 +25,10 @@ struct boot_info
     uint32_t font_bytes_per_char;
     uint32_t font_char_count;
     uint32_t font_flags;
+    uint32_t boot_drive;
+    uint32_t reserved0;
+    uint32_t reserved1;
+    uint32_t reserved2;
 };
 
 int vbe_init(void);

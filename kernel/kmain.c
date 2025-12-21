@@ -16,6 +16,9 @@
 #include "ipc.h"
 #include "pit.h"
 #include "debug.h"
+#include "blockdev.h"
+#include "partition.h"
+#include "bios_fallback.h"
 
 extern void shell_run(void);
 extern void user_init(void);
@@ -40,6 +43,13 @@ static void print_banner(void)
 void kmain(void)
 {
     memory_init();
+    blockdev_init();
+    partition_init();
+
+    const struct boot_info *info = boot_info_get();
+    uint8_t boot_drive = info ? (uint8_t)(info->boot_drive & 0xFFu) : 0x80u;
+    bios_fallback_init(boot_drive);
+
     vbe_init();
     vga_init();
     vga_clear();
@@ -51,7 +61,6 @@ void kmain(void)
     else
         klog_info("kernel: vfs ready");
 
-    const struct boot_info *info = boot_info_get();
     int fat_ok = 0;
     if (info && info->fat_ptr && info->fat_size)
     {
@@ -79,6 +88,8 @@ void kmain(void)
     klog_info("kernel: device manager ready");
     module_system_init();
     klog_info("kernel: module system online");
+    partition_autoscan();
+    blockdev_log_devices();
     process_system_init();
     klog_info("kernel: process system initialized");
     syscall_init();

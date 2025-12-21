@@ -338,7 +338,7 @@ pm_entry:
 
     ; Populate boot info structure
     mov edi, BOOT_INFO_ADDR
-    mov ecx, 16
+    mov ecx, 20
     xor eax, eax
     rep stosd
 
@@ -354,6 +354,8 @@ pm_entry:
     mov [BOOT_INFO_ADDR + 8], eax
     mov [BOOT_INFO_ADDR + 28], eax
 
+    movzx eax, byte [boot_drive]
+    mov [BOOT_INFO_ADDR + 64], eax
     mov eax, [vbe_pitch]
     mov [BOOT_INFO_ADDR + 12], eax
 

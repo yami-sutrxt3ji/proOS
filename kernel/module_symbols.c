@@ -15,6 +15,7 @@
 #include "blockdev.h"
 #include "partition.h"
 #include "bios_fallback.h"
+#include "volmgr.h"
 
 static const struct kernel_symbol builtin_symbols[] = {
     { "klog_emit", (uintptr_t)&klog_emit },
@@ -71,6 +72,9 @@ static const struct kernel_symbol builtin_symbols[] = {
     { "blockdev_log_devices", (uintptr_t)&blockdev_log_devices },
     { "partition_scan_device", (uintptr_t)&partition_scan_device },
     { "partition_autoscan", (uintptr_t)&partition_autoscan },
+    { "volmgr_volume_count", (uintptr_t)&volmgr_volume_count },
+    { "volmgr_volume_at", (uintptr_t)&volmgr_volume_at },
+    { "volmgr_rescan", (uintptr_t)&volmgr_rescan },
     { "bios_fallback_available", (uintptr_t)&bios_fallback_available },
     { "bios_fallback_read", (uintptr_t)&bios_fallback_read },
     { "bios_fallback_boot_drive", (uintptr_t)&bios_fallback_boot_drive }

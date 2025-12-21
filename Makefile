@@ -58,6 +58,7 @@ KERNEL_OBJS := $(BUILD_DIR)/crt0.o \
 		   $(BUILD_DIR)/ramfs.o \
 		   $(BUILD_DIR)/devmgr.o \
 		   $(BUILD_DIR)/spinlock.o \
+		   $(BUILD_DIR)/volmgr.o \
 		   $(BUILD_DIR)/blockdev.o \
 		   $(BUILD_DIR)/partition.o \
 		   $(BUILD_DIR)/bios_fallback.o \

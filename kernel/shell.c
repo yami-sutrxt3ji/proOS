@@ -580,6 +580,9 @@ static void command_help(void)
     vga_write_line("  ls [path] - list directory contents");
     vga_write_line("  cd [path] - change working directory");
     vga_write_line("  cat <file> - print file contents");
+    vga_write_line("  mkdir <path> - create directory");
+    vga_write_line("  touch <path> - create empty file");
+    vga_write_line("  rm <path> - remove file or directory");
     vga_write_line("  mod    - module control (list/load/unload .kmd)");
     vga_write_line("  gfx    - draw compositor demo");
     vga_write_line("  kdlg   - show kernel log");
@@ -907,6 +910,131 @@ static void command_cd(const char *args)
     shell_set_cwd(resolved);
 }
 
+static int shell_copy_token(const char *input, char *buffer, size_t capacity)
+{
+    size_t idx = 0;
+    while (input[idx] && input[idx] != ' ' && idx + 1 < capacity)
+    {
+        buffer[idx] = input[idx];
+        ++idx;
+    }
+    if (input[idx] != '\0' && input[idx] != ' ')
+        return 0;
+    buffer[idx] = '\0';
+    return 1;
+}
+
+static void command_mkdir(const char *args)
+{
+    const char *token = skip_spaces(args ? args : "");
+    if (*token == '\0')
+    {
+        vga_write_line("Usage: mkdir <path>");
+        return;
+    }
+
+    char target[VFS_MAX_PATH];
+    if (!shell_copy_token(token, target, sizeof(target)))
+    {
+        vga_write_line("mkdir: path too long");
+        return;
+    }
+
+    const char *rest = skip_spaces(token + str_len(target));
+    if (*rest)
+    {
+        vga_write_line("mkdir: too many arguments");
+        return;
+    }
+
+    char absolute[VFS_MAX_PATH];
+    const char *resolved = resolve_absolute_path(target, absolute, sizeof(absolute));
+    if (!resolved)
+    {
+        vga_write_line("mkdir: invalid path");
+        return;
+    }
+
+    if (vfs_mkdir(resolved) == 0)
+        vga_write_line("Directory created.");
+    else
+        vga_write_line("mkdir: failed");
+}
+
+static void command_touch(const char *args)
+{
+    const char *token = skip_spaces(args ? args : "");
+    if (*token == '\0')
+    {
+        vga_write_line("Usage: touch <path>");
+        return;
+    }
+
+    char target[VFS_MAX_PATH];
+    if (!shell_copy_token(token, target, sizeof(target)))
+    {
+        vga_write_line("touch: path too long");
+        return;
+    }
+
+    const char *rest = skip_spaces(token + str_len(target));
+    if (*rest)
+    {
+        vga_write_line("touch: too many arguments");
+        return;
+    }
+
+    char absolute[VFS_MAX_PATH];
+    const char *resolved = resolve_absolute_path(target, absolute, sizeof(absolute));
+    if (!resolved)
+    {
+        vga_write_line("touch: invalid path");
+        return;
+    }
+
+    if (vfs_write_file(resolved, NULL, 0) < 0)
+        vga_write_line("touch: failed");
+    else
+        vga_write_line("File created.");
+}
+
+static void command_rm(const char *args)
+{
+    const char *token = skip_spaces(args ? args : "");
+    if (*token == '\0')
+    {
+        vga_write_line("Usage: rm <path>");
+        return;
+    }
+
+    char target[VFS_MAX_PATH];
+    if (!shell_copy_token(token, target, sizeof(target)))
+    {
+        vga_write_line("rm: path too long");
+        return;
+    }
+
+    const char *rest = skip_spaces(token + str_len(target));
+    if (*rest)
+    {
+        vga_write_line("rm: too many arguments");
+        return;
+    }
+
+    char absolute[VFS_MAX_PATH];
+    const char *resolved = resolve_absolute_path(target, absolute, sizeof(absolute));
+    if (!resolved)
+    {
+        vga_write_line("rm: invalid path");
+        return;
+    }
+
+    if (vfs_remove(resolved) == 0)
+        vga_write_line("Removed.");
+    else
+        vga_write_line("rm: failed");
+}
+
 static void command_mod_list(void)
 {
     const module_handle_t *handles[32];
@@ -1205,7 +1333,7 @@ static void command_mod_load(const char *args)
         if (status == -3)
             vga_write_line("mod: out of memory");
         else if (status == -2)
-            vga_write_line("mod: FAT16 image unavailable");
+            vga_write_line("mod: FAT volume unavailable");
         else
             vga_write_line("mod: failed to read module image");
         return;
@@ -1990,6 +2118,18 @@ static void shell_execute(char *line)
     else if (shell_str_equals(cursor, "cat") || shell_str_starts_with(cursor, "cat "))
     {
         command_cat(cursor + 3);
+    }
+    else if (shell_str_equals(cursor, "mkdir") || shell_str_starts_with(cursor, "mkdir "))
+    {
+        command_mkdir(cursor + 5);
+    }
+    else if (shell_str_equals(cursor, "touch") || shell_str_starts_with(cursor, "touch "))
+    {
+        command_touch(cursor + 5);
+    }
+    else if (shell_str_equals(cursor, "rm") || shell_str_starts_with(cursor, "rm "))
+    {
+        command_rm(cursor + 2);
     }
     else if (shell_str_equals(cursor, "tasks") || shell_str_equals(cursor, "proc_list"))
     {

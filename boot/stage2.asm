@@ -338,7 +338,7 @@ pm_entry:
 
     ; Populate boot info structure
     mov edi, BOOT_INFO_ADDR
-    mov ecx, 20
+    mov ecx, 24
     xor eax, eax
     rep stosd
 
@@ -354,8 +354,6 @@ pm_entry:
     mov [BOOT_INFO_ADDR + 8], eax
     mov [BOOT_INFO_ADDR + 28], eax
 
-    movzx eax, byte [boot_drive]
-    mov [BOOT_INFO_ADDR + 64], eax
     mov eax, [vbe_pitch]
     mov [BOOT_INFO_ADDR + 12], eax
 
@@ -373,6 +371,9 @@ pm_entry:
 
 .skip_vbe_info:
 
+    movzx eax, byte [boot_drive]
+    mov [BOOT_INFO_ADDR + 72], eax
+
 %if FAT16_SECTORS > 0
     cmp byte [fat_loaded], 1
     jne .skip_fat_info
@@ -380,6 +381,11 @@ pm_entry:
     mov [BOOT_INFO_ADDR + 36], eax
     mov eax, FAT16_SIZE_BYTES
     mov [BOOT_INFO_ADDR + 40], eax
+    mov eax, FAT16_START_SECTOR
+    dec eax
+    mov [BOOT_INFO_ADDR + 44], eax
+    mov eax, FAT16_SECTORS
+    mov [BOOT_INFO_ADDR + 48], eax
 .skip_fat_info:
 %endif
 
@@ -399,16 +405,16 @@ pm_entry:
     shl ebx, 4
     movzx eax, word [font_off]
     add ebx, eax
-    mov [BOOT_INFO_ADDR + 44], ebx
+    mov [BOOT_INFO_ADDR + 52], ebx
 
-    mov [BOOT_INFO_ADDR + 48], ecx
-    mov [BOOT_INFO_ADDR + 52], edx
+    mov [BOOT_INFO_ADDR + 56], ecx
+    mov [BOOT_INFO_ADDR + 60], edx
 
     movzx eax, word [font_char_count]
-    mov [BOOT_INFO_ADDR + 56], eax
+    mov [BOOT_INFO_ADDR + 64], eax
 
     movzx eax, word [font_flags]
-    mov [BOOT_INFO_ADDR + 60], eax
+    mov [BOOT_INFO_ADDR + 68], eax
 
 .skip_font_info:
     mov eax, KERNEL_BASE_ADDR

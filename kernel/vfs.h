@@ -21,6 +21,7 @@ struct vfs_fs_ops
     int (*read)(void *ctx, const char *path, char *buffer, size_t buffer_size);
     int (*write)(void *ctx, const char *path, const char *data, size_t length, enum vfs_write_mode mode);
     int (*remove)(void *ctx, const char *path);
+    int (*mkdir)(void *ctx, const char *path);
 };
 
 int vfs_init(void);
@@ -30,5 +31,6 @@ int vfs_read(const char *path, char *buffer, size_t buffer_size);
 int vfs_write(const char *path, const char *data, size_t length);
 int vfs_write_file(const char *path, const char *data, size_t length);
 int vfs_remove(const char *path);
+int vfs_mkdir(const char *path);
 
 #endif

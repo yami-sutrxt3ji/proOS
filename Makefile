@@ -55,6 +55,7 @@ KERNEL_OBJS := $(BUILD_DIR)/crt0.o \
 		   $(BUILD_DIR)/vfs.o \
 		   $(BUILD_DIR)/vbe.o \
 		   $(BUILD_DIR)/gfx.o \
+		   $(BUILD_DIR)/fatfs.o \
 		   $(BUILD_DIR)/fat16.o \
 		   $(BUILD_DIR)/shell.o \
 		   $(BUILD_DIR)/ramfs.o \

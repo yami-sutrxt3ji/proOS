@@ -28,6 +28,7 @@ MODULE_METADATA("ata", "0.2.0", MODULE_FLAG_AUTOSTART);
 
 #define ATA_CMD_IDENTIFY   0xEC
 #define ATA_CMD_READ       0x20
+#define ATA_CMD_WRITE      0x30
 
 #define ATA_SR_ERR 0x01
 #define ATA_SR_DRQ 0x08
@@ -167,6 +168,36 @@ static int ata_pio_read(struct ata_device *dev, uint64_t lba, uint32_t count, ui
     return 0;
 }
 
+static int ata_pio_write(struct ata_device *dev, uint64_t lba, uint32_t count, const uint8_t *src)
+{
+    uint32_t remaining = count;
+    while (remaining > 0)
+    {
+        uint16_t chunk = (remaining > 128) ? 128 : (uint16_t)remaining;
+
+        ata_select(dev, lba);
+        outb(dev->io_base + ATA_REG_SECCOUNT0, (uint8_t)chunk);
+        outb(dev->io_base + ATA_REG_LBA0, (uint8_t)(lba & 0xFFu));
+        outb(dev->io_base + ATA_REG_LBA1, (uint8_t)((lba >> 8) & 0xFFu));
+        outb(dev->io_base + ATA_REG_LBA2, (uint8_t)((lba >> 16) & 0xFFu));
+        outb(dev->io_base + ATA_REG_COMMAND, ATA_CMD_WRITE);
+
+        if (ata_wait(dev, 1) < 0)
+            return -1;
+
+        size_t words = (size_t)chunk * 256u;
+        outsw(dev->io_base + ATA_REG_DATA, src, words);
+
+        if (ata_wait(dev, 0) < 0)
+            return -1;
+
+        remaining -= chunk;
+        lba += chunk;
+        src += (size_t)chunk * 512u;
+    }
+    return 0;
+}
+
 static int ata_block_read(struct block_device *bdev, uint64_t lba, uint32_t count, void *buffer)
 {
     struct ata_device *dev = (struct ata_device *)bdev->driver_data;
@@ -192,10 +223,24 @@ static int ata_block_read(struct block_device *bdev, uint64_t lba, uint32_t coun
 
 static int ata_block_write(struct block_device *bdev, uint64_t lba, uint32_t count, const void *buffer)
 {
-    (void)bdev;
-    (void)lba;
-    (void)count;
-    (void)buffer;
+    struct ata_device *dev = (struct ata_device *)bdev->driver_data;
+    if (!dev || !buffer || count == 0)
+        return -1;
+
+    const uint8_t *src = (const uint8_t *)buffer;
+    if (dev->present)
+    {
+        if (ata_pio_write(dev, lba, count, src) == 0)
+            return 0;
+    }
+
+    if (bios_fallback_available())
+    {
+        uint8_t drive = bios_fallback_boot_drive();
+        if (bios_fallback_write(drive, lba, count, buffer) == 0)
+            return 0;
+    }
+
     return -1;
 }
 

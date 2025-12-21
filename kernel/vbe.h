@@ -20,6 +20,8 @@ struct boot_info
     uint32_t fb_size;
     uint32_t fat_ptr;
     uint32_t fat_size;
+    uint32_t fat_lba;
+    uint32_t fat_sectors;
     uint32_t font_ptr;
     uint32_t font_height;
     uint32_t font_bytes_per_char;

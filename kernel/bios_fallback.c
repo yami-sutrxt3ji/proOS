@@ -34,6 +34,7 @@ static inline void *bounce_ptr(void)
 }
 
 extern int bios_thunk_read(uint8_t drive, uint16_t dap_segment, uint16_t dap_offset);
+extern int bios_thunk_write(uint8_t drive, uint16_t dap_segment, uint16_t dap_offset);
 
 void bios_fallback_init(uint8_t boot_drive)
 {
@@ -70,6 +71,24 @@ static int read_chunk(uint8_t drive, uint64_t lba, uint16_t count, void *buffer)
     return 0;
 }
 
+static int write_chunk(uint8_t drive, uint64_t lba, uint16_t count, const void *buffer)
+{
+    struct bios_dap *dap = dap_ptr();
+    memset(dap, 0, sizeof(*dap));
+    dap->size = 16;
+    dap->count = count;
+    dap->buffer_segment = (uint16_t)(BIOS_BOUNCE_ADDRESS >> 4);
+    dap->buffer_offset = (uint16_t)(BIOS_BOUNCE_ADDRESS & 0x0F);
+    dap->lba = lba;
+
+    memcpy(bounce_ptr(), buffer, (size_t)count * 512u);
+
+    int status = bios_thunk_write(drive, 0x0000, (uint16_t)(BIOS_DAP_ADDRESS));
+    if (status < 0)
+        return status;
+    return 0;
+}
+
 int bios_fallback_read(uint8_t drive, uint64_t lba, uint32_t count, void *buffer)
 {
     if (!fallback_ready || !buffer || count == 0)
@@ -85,6 +104,25 @@ int bios_fallback_read(uint8_t drive, uint64_t lba, uint32_t count, void *buffer
         remaining -= chunk;
         lba += chunk;
         dst += (size_t)chunk * 512u;
+    }
+    return 0;
+}
+
+int bios_fallback_write(uint8_t drive, uint64_t lba, uint32_t count, const void *buffer)
+{
+    if (!fallback_ready || !buffer || count == 0)
+        return -1;
+
+    const uint8_t *src = (const uint8_t *)buffer;
+    uint32_t remaining = count;
+    while (remaining > 0)
+    {
+        uint16_t chunk = (remaining > BIOS_MAX_SECTORS) ? BIOS_MAX_SECTORS : (uint16_t)remaining;
+        if (write_chunk(drive, lba, chunk, src) < 0)
+            return -1;
+        remaining -= chunk;
+        lba += chunk;
+        src += (size_t)chunk * 512u;
     }
     return 0;
 }

@@ -37,7 +37,7 @@ static void mem_copy(char *dst, const char *src, size_t len)
         dst[i] = src[i];
 }
 
-static struct ramfs_entry *find_file(struct ramfs_volume *volume, const char *name)
+static struct ramfs_entry *find_entry(struct ramfs_volume *volume, const char *name)
 {
     if (!volume)
         return NULL;
@@ -49,14 +49,18 @@ static struct ramfs_entry *find_file(struct ramfs_volume *volume, const char *na
     return NULL;
 }
 
-static struct ramfs_entry *create_file(struct ramfs_volume *volume, const char *name)
+static struct ramfs_entry *create_entry(struct ramfs_volume *volume, const char *name, int directory)
 {
     if (!volume)
         return NULL;
 
-    struct ramfs_entry *existing = find_file(volume, name);
+    struct ramfs_entry *existing = find_entry(volume, name);
     if (existing)
-        return existing;
+    {
+        if ((existing->is_directory ? 1 : 0) == (directory ? 1 : 0))
+            return existing;
+        return NULL;
+    }
 
     for (size_t i = 0; i < RAMFS_MAX_FILES; ++i)
     {
@@ -65,6 +69,7 @@ static struct ramfs_entry *create_file(struct ramfs_volume *volume, const char *
             volume->files[i].used = 1;
             volume->files[i].size = 0;
             str_copy(volume->files[i].name, name, RAMFS_MAX_NAME);
+            volume->files[i].is_directory = directory ? 1 : 0;
             volume->files[i].data[0] = '\0';
             return &volume->files[i];
         }
@@ -81,6 +86,7 @@ void ramfs_volume_init(struct ramfs_volume *volume)
     {
         volume->files[i].used = 0;
         volume->files[i].name[0] = '\0';
+        volume->files[i].is_directory = 0;
         volume->files[i].size = 0;
         volume->files[i].data[0] = '\0';
     }
@@ -99,11 +105,15 @@ int ramfs_volume_list(struct ramfs_volume *volume, char *buffer, size_t buffer_s
             continue;
 
         size_t name_len = str_len(volume->files[i].name);
-        if (written + name_len + 1 >= buffer_size)
+        size_t extra = volume->files[i].is_directory ? 1 : 0;
+        if (written + name_len + extra + 1 >= buffer_size)
             break;
 
         for (size_t j = 0; j < name_len; ++j)
             buffer[written++] = volume->files[i].name[j];
+
+        if (volume->files[i].is_directory)
+            buffer[written++] = '/';
 
         buffer[written++] = '\n';
     }
@@ -120,8 +130,8 @@ int ramfs_volume_read(struct ramfs_volume *volume, const char *name, char *out, 
     if (!volume || !name || !out || out_size == 0)
         return -1;
 
-    struct ramfs_entry *file = find_file(volume, name);
-    if (!file)
+    struct ramfs_entry *file = find_entry(volume, name);
+    if (!file || file->is_directory)
         return -1;
 
     size_t to_copy = file->size;
@@ -138,8 +148,11 @@ int ramfs_volume_append(struct ramfs_volume *volume, const char *name, const cha
     if (!volume || !name || !data || length == 0)
         return -1;
 
-    struct ramfs_entry *file = create_file(volume, name);
+    struct ramfs_entry *file = create_entry(volume, name, 0);
     if (!file)
+        return -1;
+
+    if (file->is_directory)
         return -1;
 
     if (file->size + length >= RAMFS_MAX_FILE_SIZE)
@@ -156,8 +169,11 @@ int ramfs_volume_write(struct ramfs_volume *volume, const char *name, const char
     if (!volume || !name)
         return -1;
 
-    struct ramfs_entry *file = create_file(volume, name);
+    struct ramfs_entry *file = create_entry(volume, name, 0);
     if (!file)
+        return -1;
+
+    if (file->is_directory)
         return -1;
 
     if (!data)
@@ -181,14 +197,29 @@ int ramfs_volume_remove(struct ramfs_volume *volume, const char *name)
     if (!volume || !name)
         return -1;
 
-    struct ramfs_entry *file = find_file(volume, name);
+    struct ramfs_entry *file = find_entry(volume, name);
     if (!file)
         return -1;
 
     file->used = 0;
     file->size = 0;
+    file->is_directory = 0;
     file->name[0] = '\0';
     file->data[0] = '\0';
+    return 0;
+}
+
+int ramfs_volume_mkdir(struct ramfs_volume *volume, const char *name)
+{
+    if (!volume || !name)
+        return -1;
+
+    struct ramfs_entry *entry = create_entry(volume, name, 1);
+    if (!entry)
+        return -1;
+
+    entry->size = 0;
+    entry->data[0] = '\0';
     return 0;
 }
 
@@ -231,4 +262,9 @@ int ramfs_write_file(const char *name, const char *data, size_t length)
 int ramfs_remove(const char *name)
 {
     return ramfs_volume_remove(ramfs_root_volume(), name);
+}
+
+int ramfs_mkdir(const char *name)
+{
+    return ramfs_volume_mkdir(ramfs_root_volume(), name);
 }

@@ -9,6 +9,7 @@
 #include "memory.h"
 #include "vbe.h"
 #include "fat16.h"
+#include "fatfs.h"
 #include "gfx.h"
 #include "klog.h"
 #include "module.h"
@@ -48,7 +49,10 @@ void kmain(void)
     partition_init();
 
     const struct boot_info *info = boot_info_get();
-    bios_fallback_init(0x80u);
+    uint8_t boot_drive = 0x80u;
+    if (info && info->boot_drive)
+        boot_drive = (uint8_t)info->boot_drive;
+    bios_fallback_init(boot_drive);
 
     vbe_init();
     vga_init();
@@ -62,22 +66,31 @@ void kmain(void)
         klog_info("kernel: vfs ready");
 
     int fat_ok = 0;
+    int fat_type = FATFS_TYPE_NONE;
     if (info && info->fat_ptr && info->fat_size)
     {
         fat_ok = fat16_init((const void *)(uintptr_t)info->fat_ptr, (size_t)info->fat_size);
+        if (fat_ok)
+        {
+            fat16_configure_backing(info->fat_lba, info->fat_sectors);
+            fat_type = fat16_type();
+        }
     }
 
     if (fat_ok)
     {
-        klog_info("kernel: FAT16 image mounted");
-        if (fat16_mount_volume("Disk0") == 0)
-            klog_info("kernel: FAT16 volume available at /Volumes/Disk0");
+        if (fat_type == FATFS_TYPE_FAT32)
+            klog_info("kernel: FAT32 image detected");
         else
-            klog_warn("kernel: failed to expose FAT16 volume");
+            klog_info("kernel: FAT16 image detected");
+        if (fat16_mount_volume("Disk0") == 0)
+            klog_info("kernel: FAT volume available at /Volumes/Disk0");
+        else
+            klog_warn("kernel: failed to expose FAT volume");
     }
     else
     {
-        klog_warn("kernel: FAT16 image unavailable");
+        klog_warn("kernel: FAT volume unavailable");
     }
 
     idt_init();

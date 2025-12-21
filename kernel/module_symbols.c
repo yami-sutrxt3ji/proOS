@@ -29,6 +29,7 @@ static const struct kernel_symbol builtin_symbols[] = {
     { "vfs_read", (uintptr_t)&vfs_read },
     { "vfs_list", (uintptr_t)&vfs_list },
     { "vfs_remove", (uintptr_t)&vfs_remove },
+    { "vfs_mkdir", (uintptr_t)&vfs_mkdir },
     { "ipc_channel_create", (uintptr_t)&ipc_channel_create },
     { "ipc_channel_join", (uintptr_t)&ipc_channel_join },
     { "ipc_channel_leave", (uintptr_t)&ipc_channel_leave },
@@ -40,7 +41,12 @@ static const struct kernel_symbol builtin_symbols[] = {
     { "get_ticks", (uintptr_t)&get_ticks },
     { "pit_init", (uintptr_t)&pit_init },
     { "fat16_ready", (uintptr_t)&fat16_ready },
+    { "fat16_type", (uintptr_t)&fat16_type },
     { "fat16_ls", (uintptr_t)&fat16_ls },
+    { "fat16_write_file", (uintptr_t)&fat16_write_file },
+    { "fat16_append_file", (uintptr_t)&fat16_append_file },
+    { "fat16_remove", (uintptr_t)&fat16_remove },
+    { "fat16_mkdir", (uintptr_t)&fat16_mkdir },
     { "kb_init", (uintptr_t)&kb_init },
     { "kb_getchar", (uintptr_t)&kb_getchar },
     { "kb_dump_layout", (uintptr_t)&kb_dump_layout },
@@ -77,6 +83,7 @@ static const struct kernel_symbol builtin_symbols[] = {
     { "volmgr_rescan", (uintptr_t)&volmgr_rescan },
     { "bios_fallback_available", (uintptr_t)&bios_fallback_available },
     { "bios_fallback_read", (uintptr_t)&bios_fallback_read },
+    { "bios_fallback_write", (uintptr_t)&bios_fallback_write },
     { "bios_fallback_boot_drive", (uintptr_t)&bios_fallback_boot_drive }
 };
 

@@ -12,6 +12,7 @@ struct ramfs_entry
 {
 	int used;
 	char name[RAMFS_MAX_NAME];
+	uint8_t is_directory;
 	size_t size;
 	char data[RAMFS_MAX_FILE_SIZE];
 };
@@ -27,6 +28,7 @@ int ramfs_volume_read(struct ramfs_volume *volume, const char *name, char *out, 
 int ramfs_volume_append(struct ramfs_volume *volume, const char *name, const char *data, size_t length);
 int ramfs_volume_write(struct ramfs_volume *volume, const char *name, const char *data, size_t length);
 int ramfs_volume_remove(struct ramfs_volume *volume, const char *name);
+int ramfs_volume_mkdir(struct ramfs_volume *volume, const char *name);
 
 /* Legacy single-volume helpers (backed by the root RAMFS instance). */
 void ramfs_init(void);
@@ -35,6 +37,7 @@ int ramfs_read(const char *name, char *out, size_t out_size);
 int ramfs_write(const char *name, const char *data, size_t length);
 int ramfs_write_file(const char *name, const char *data, size_t length);
 int ramfs_remove(const char *name);
+int ramfs_mkdir(const char *name);
 
 struct ramfs_volume *ramfs_root_volume(void);
 

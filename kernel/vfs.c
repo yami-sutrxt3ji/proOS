@@ -229,11 +229,22 @@ static int ramfs_remove_adapter(void *ctx, const char *path)
     return ramfs_volume_remove(volume, path);
 }
 
+static int ramfs_mkdir_adapter(void *ctx, const char *path)
+{
+    struct ramfs_volume *volume = (struct ramfs_volume *)ctx;
+    if (!volume || !path || path[0] == '\0')
+        return -1;
+    if (path_has_separator(path))
+        return -1;
+    return ramfs_volume_mkdir(volume, path);
+}
+
 static const struct vfs_fs_ops ramfs_ops = {
     .list = ramfs_list_adapter,
     .read = ramfs_read_adapter,
     .write = ramfs_write_adapter,
-    .remove = ramfs_remove_adapter
+    .remove = ramfs_remove_adapter,
+    .mkdir = ramfs_mkdir_adapter
 };
 
 int vfs_mount(const char *mount_point, const struct vfs_fs_ops *ops, void *ctx)
@@ -362,6 +373,23 @@ int vfs_remove(const char *path)
         return -1;
 
     return mount->ops->remove(mount->ctx, safe_relative(relative));
+}
+
+int vfs_mkdir(const char *path)
+{
+    if (!path)
+        return -1;
+
+    char normalized[VFS_MAX_PATH];
+    if (normalize_path(path, normalized, sizeof(normalized)) < 0)
+        return -1;
+
+    const char *relative = NULL;
+    struct vfs_mount *mount = resolve_mount(normalized, &relative);
+    if (!mount || !mount->ops || !mount->ops->mkdir)
+        return -1;
+
+    return mount->ops->mkdir(mount->ctx, safe_relative(relative));
 }
 
 static void add_root_directory(const char *name)

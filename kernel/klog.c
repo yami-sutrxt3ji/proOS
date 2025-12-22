@@ -350,8 +350,8 @@ void klog_refresh_proc_sink(void)
         append_char(line, &pos, sizeof(line), ' ');
         append_text(line, &pos, sizeof(line), entries[i].text);
         line[pos] = '\0';
-        vfs_write("/System/log", line, pos);
-        vfs_write("/System/log", "\n", 1);
+        vfs_append("/System/log", line, pos);
+        vfs_append("/System/log", "\n", 1);
     }
 
     proc_sink_guard = 0;

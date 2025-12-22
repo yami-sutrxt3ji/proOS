@@ -24,6 +24,16 @@ static struct ramfs_volume devices_volume;
 
 static int mounts_initialized = 0;
 
+/* Per-open descriptor record that keeps the resolved mount and remaining path. */
+struct vfs_handle
+{
+    int used;
+    struct vfs_mount *mount;
+    char relative[VFS_MAX_PATH];
+};
+
+static struct vfs_handle open_table[VFS_MAX_OPEN_FILES];
+
 static size_t local_strlen(const char *s)
 {
     return s ? strlen(s) : 0;
@@ -314,7 +324,7 @@ int vfs_list(const char *path, char *buffer, size_t buffer_size)
     return mount->ops->list(mount->ctx, safe_relative(relative), buffer, buffer_size);
 }
 
-int vfs_read(const char *path, char *buffer, size_t buffer_size)
+int vfs_read_path(const char *path, char *buffer, size_t buffer_size)
 {
     if (!path || !buffer || buffer_size == 0)
         return -1;
@@ -348,7 +358,7 @@ static int vfs_write_internal(const char *path, const char *data, size_t length,
     return mount->ops->write(mount->ctx, safe_relative(relative), data, length, mode);
 }
 
-int vfs_write(const char *path, const char *data, size_t length)
+int vfs_append(const char *path, const char *data, size_t length)
 {
     return vfs_write_internal(path, data, length, VFS_WRITE_APPEND);
 }
@@ -356,6 +366,90 @@ int vfs_write(const char *path, const char *data, size_t length)
 int vfs_write_file(const char *path, const char *data, size_t length)
 {
     return vfs_write_internal(path, data, length, VFS_WRITE_REPLACE);
+}
+
+static struct vfs_handle *get_handle(int fd)
+{
+    if (fd < 0 || fd >= VFS_MAX_OPEN_FILES)
+        return NULL;
+    if (!open_table[fd].used)
+        return NULL;
+    return &open_table[fd];
+}
+
+int vfs_open(const char *path)
+{
+    if (!path)
+        return -1;
+
+    char normalized[VFS_MAX_PATH];
+    if (normalize_path(path, normalized, sizeof(normalized)) < 0)
+        return -1;
+
+    const char *relative = NULL;
+    struct vfs_mount *mount = resolve_mount(normalized, &relative);
+    if (!mount)
+        return -1;
+    if (!mount->ops)
+        return -1;
+    if (!mount->ops->read && !mount->ops->write)
+        return -1;
+
+    for (int fd = 0; fd < VFS_MAX_OPEN_FILES; ++fd)
+    {
+        if (open_table[fd].used)
+            continue;
+
+        open_table[fd].used = 1;
+        open_table[fd].mount = mount;
+
+        const char *rel = safe_relative(relative);
+        size_t len = local_strlen(rel);
+        if (len >= VFS_MAX_PATH)
+        {
+            open_table[fd].used = 0;
+            open_table[fd].mount = NULL;
+            open_table[fd].relative[0] = '\0';
+            return -1;
+        }
+        for (size_t i = 0; i <= len; ++i)
+            open_table[fd].relative[i] = rel[i];
+
+        return fd;
+    }
+
+    return -1;
+}
+
+int vfs_read(int fd, void *buffer, size_t size)
+{
+    if (!buffer || size == 0)
+        return -1;
+    struct vfs_handle *handle = get_handle(fd);
+    if (!handle || !handle->mount || !handle->mount->ops || !handle->mount->ops->read)
+        return -1;
+    return handle->mount->ops->read(handle->mount->ctx, safe_relative(handle->relative), buffer, size);
+}
+
+int vfs_write(int fd, const void *buffer, size_t size)
+{
+    if (!buffer)
+        return -1;
+    struct vfs_handle *handle = get_handle(fd);
+    if (!handle || !handle->mount || !handle->mount->ops || !handle->mount->ops->write)
+        return -1;
+    return handle->mount->ops->write(handle->mount->ctx, safe_relative(handle->relative), (const char *)buffer, size, VFS_WRITE_REPLACE);
+}
+
+int vfs_close(int fd)
+{
+    struct vfs_handle *handle = get_handle(fd);
+    if (!handle)
+        return -1;
+    handle->used = 0;
+    handle->mount = NULL;
+    handle->relative[0] = '\0';
+    return 0;
 }
 
 int vfs_remove(const char *path)
@@ -457,6 +551,13 @@ int vfs_init(void)
     {
         klog_error("vfs: failed to mount root filesystem");
         return -1;
+    }
+
+    for (size_t i = 0; i < VFS_MAX_OPEN_FILES; ++i)
+    {
+        open_table[i].used = 0;
+        open_table[i].mount = NULL;
+        open_table[i].relative[0] = '\0';
     }
 
     vfs_prepare_virtual_fs();

@@ -149,7 +149,7 @@ void debug_publish_task_list(void)
     char line[160];
     size_t pos = 0;
     append_text(line, &pos, sizeof(line), "PID STATE    KIND PRI(base/dyn) REM TICKS WAKE STACK ESP\n");
-    vfs_write("/System/tasks", line, pos);
+    vfs_append("/System/tasks", line, pos);
 
     for (size_t i = 0; i < count; ++i)
     {
@@ -179,7 +179,7 @@ void debug_publish_task_list(void)
         if (pos >= sizeof(line))
             pos = sizeof(line) - 1;
         line[pos] = '\0';
-        vfs_write("/System/tasks", line, pos);
+        vfs_append("/System/tasks", line, pos);
     }
 }
 
@@ -203,7 +203,7 @@ void debug_publish_device_list(void)
     char line[192];
     size_t pos = 0;
     append_text(line, &pos, sizeof(line), "ID NAME TYPE FLAGS PARENT\n");
-    vfs_write("/System/devices", line, pos);
+    vfs_append("/System/devices", line, pos);
 
     for (size_t i = 0; i < count; ++i)
     {
@@ -223,7 +223,7 @@ void debug_publish_device_list(void)
         if (pos >= sizeof(line))
             pos = sizeof(line) - 1;
         line[pos] = '\0';
-        vfs_write("/System/devices", line, pos);
+        vfs_append("/System/devices", line, pos);
     }
 }
 

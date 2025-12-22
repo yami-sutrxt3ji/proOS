@@ -657,7 +657,7 @@ static void command_echo(char *args)
         return;
     }
 
-    if (vfs_write(target, data, len) < 0)
+    if (vfs_append(target, data, len) < 0)
         vga_write_line("Write failed.");
     else
         vga_write_line("OK");
@@ -844,13 +844,26 @@ static void command_cat(const char *arg)
         return;
     }
 
-    char data[VFS_INLINE_CAP];
-    int read = vfs_read(target, data, sizeof(data));
-    if (read < 0)
+    int fd = vfs_open(target);
+    if (fd < 0)
     {
         vga_write_line("File not found.");
         return;
     }
+
+    char data[VFS_INLINE_CAP];
+    int read = vfs_read(fd, data, sizeof(data) - 1u);
+    if (read < 0)
+    {
+        vfs_close(fd);
+        vga_write_line("File not readable.");
+        return;
+    }
+
+    if ((size_t)read >= sizeof(data))
+        read = (int)(sizeof(data) - 1u);
+    data[read] = '\0';
+    vfs_close(fd);
 
     vga_write_line(data);
 }
@@ -899,11 +912,16 @@ static void command_cd(const char *args)
     int list = vfs_list(resolved, probe, sizeof(probe));
     if (list < 0)
     {
-        char tmp[VFS_INLINE_CAP];
-        if (vfs_read(resolved, tmp, sizeof(tmp)) >= 0)
+        int fd = vfs_open(resolved);
+        if (fd >= 0)
+        {
+            vfs_close(fd);
             vga_write_line("cd: not a directory");
+        }
         else
+        {
             vga_write_line("cd: no such path");
+        }
         return;
     }
 
@@ -989,6 +1007,21 @@ static void command_touch(const char *args)
     if (!resolved)
     {
         vga_write_line("touch: invalid path");
+        return;
+    }
+
+    int fd = vfs_open(resolved);
+    if (fd >= 0)
+    {
+        vfs_close(fd);
+        vga_write_line("File updated.");
+        return;
+    }
+
+    char probe[16];
+    if (vfs_list(resolved, probe, sizeof(probe)) >= 0)
+    {
+        vga_write_line("touch: path is a directory");
         return;
     }
 
@@ -1198,7 +1231,15 @@ static int load_module_image_from_absolute(const char *absolute, uint8_t **out_b
     if (!buffer)
         return -3;
 
-    int read = vfs_read(absolute, (char *)buffer, VFS_INLINE_CAP);
+    int fd = vfs_open(absolute);
+    if (fd < 0)
+    {
+        release_module_buffer(buffer);
+        return -1;
+    }
+
+    int read = vfs_read(fd, (char *)buffer, VFS_INLINE_CAP);
+    vfs_close(fd);
     if (read <= 0)
     {
         release_module_buffer(buffer);

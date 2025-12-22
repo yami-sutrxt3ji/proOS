@@ -29,7 +29,7 @@ static void publish_directory_listing(void)
         return;
     }
 
-    if (vfs_write("/fat/list", listing, (size_t)written) < 0)
+    if (vfs_append("/fat/list", listing, (size_t)written) < 0)
         klog_warn("fs.module: vfs_write fat16.dir failed");
 }
 
@@ -42,7 +42,7 @@ static void try_load_font(void)
     }
 
     const char *note = "font: loaded from FAT16\n";
-    if (vfs_write("/System/font.status", note, local_strlen(note)) < 0)
+    if (vfs_append("/System/font.status", note, local_strlen(note)) < 0)
         klog_warn("fs.module: vfs_write font.status failed");
     else
         klog_info("fs.module: font loaded");

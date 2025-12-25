@@ -19,6 +19,33 @@ static uint32_t next_device_id = 1;
 static struct device_node *root_device = NULL;
 static int devmgr_channel_id = -1;
 
+static int null_device_read(struct device_node *node, void *buffer, size_t length, size_t *out_read)
+{
+    (void)node;
+    (void)buffer;
+    (void)length;
+    if (out_read)
+        *out_read = 0;
+    return 0;
+}
+
+static int null_device_write(struct device_node *node, const void *buffer, size_t length, size_t *out_written)
+{
+    (void)node;
+    (void)buffer;
+    if (out_written)
+        *out_written = length;
+    return 0;
+}
+
+static const struct device_ops null_device_ops = {
+    NULL,
+    NULL,
+    null_device_read,
+    null_device_write,
+    NULL
+};
+
 static size_t str_length(const char *s);
 static void str_copy(char *dst, size_t dst_cap, const char *src);
 
@@ -380,6 +407,17 @@ void devmgr_init(void)
     create_internal_device("platform0", "bus.platform", root_device);
     create_internal_device("storage0", "bus.storage", root_device);
 
+    struct device_descriptor null_desc = {
+        "null0",
+        "device.null",
+        "platform0",
+        &null_device_ops,
+        DEVICE_FLAG_PUBLISH,
+        NULL
+    };
+    if (devmgr_register_device(&null_desc, NULL) < 0)
+        klog_warn("devmgr: failed to register null device");
+
     devmgr_refresh_ramfs();
 }
 
@@ -485,6 +523,11 @@ size_t devmgr_enumerate(const struct device_node **out, size_t max)
 }
 
 const struct device_node *devmgr_find(const char *name)
+{
+    return find_device_by_name(name);
+}
+
+struct device_node *devmgr_find_node(const char *name)
 {
     return find_device_by_name(name);
 }

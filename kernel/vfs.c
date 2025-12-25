@@ -1,5 +1,6 @@
 #include "vfs.h"
 #include "ramfs.h"
+#include "devicefs.h"
 #include "klog.h"
 #include "string.h"
 #include "debug.h"
@@ -20,7 +21,6 @@ static struct ramfs_volume volumes_volume;
 static struct ramfs_volume users_volume;
 static struct ramfs_volume apps_volume;
 static struct ramfs_volume temp_volume;
-static struct ramfs_volume devices_volume;
 
 static int mounts_initialized = 0;
 
@@ -513,14 +513,14 @@ static void vfs_prepare_virtual_fs(void)
     ramfs_volume_init(&users_volume);
     ramfs_volume_init(&apps_volume);
     ramfs_volume_init(&temp_volume);
-    ramfs_volume_init(&devices_volume);
 
     vfs_mount("/System", &ramfs_ops, &system_volume);
     vfs_mount("/Volumes", &ramfs_ops, &volumes_volume);
     vfs_mount("/Users", &ramfs_ops, &users_volume);
     vfs_mount("/Apps", &ramfs_ops, &apps_volume);
     vfs_mount("/Temp", &ramfs_ops, &temp_volume);
-    vfs_mount("/Devices", &ramfs_ops, &devices_volume);
+    if (devicefs_mount() < 0)
+        klog_warn("vfs: devicefs mount failed");
 
     const char *version = "proOS kernel/0.5\n";
     vfs_write_file("/System/version", version, local_strlen(version));

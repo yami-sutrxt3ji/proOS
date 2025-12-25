@@ -953,8 +953,8 @@ int fatfs_mount(struct fatfs_volume *volume, const char *name)
         volume->mount_path[prefix_len + i] = label[i];
     volume->mount_path[prefix_len + label_len] = '\0';
 
-    if (vfs_write_file(volume->mount_path, "", 0) < 0)
-        klog_warn("fatfs: failed to seed mount entry");
+    if (vfs_mkdir(volume->mount_path) < 0)
+        vfs_write_file(volume->mount_path, NULL, 0);
 
     if (vfs_mount(volume->mount_path, &fatfs_ops, volume) < 0)
         return -1;

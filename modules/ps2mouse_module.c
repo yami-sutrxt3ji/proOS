@@ -18,10 +18,38 @@ static size_t local_strlen(const char *s)
     return len;
 }
 
+static int ps2mouse_read(struct device_node *node, void *buffer, size_t length, size_t *out_read)
+{
+    (void)node;
+    if (!buffer || length == 0)
+        return -1;
+
+    const char *msg = "mouse: awaiting driver\n";
+    size_t msg_len = local_strlen(msg);
+    if (msg_len == 0)
+    {
+        if (out_read)
+            *out_read = 0;
+        return 0;
+    }
+
+    if (msg_len >= length)
+        msg_len = length - 1u;
+
+    char *dst = (char *)buffer;
+    for (size_t i = 0; i < msg_len; ++i)
+        dst[i] = msg[i];
+    dst[msg_len] = '\0';
+
+    if (out_read)
+        *out_read = msg_len;
+    return 0;
+}
+
 static const struct device_ops ps2mouse_ops = {
     NULL,
     NULL,
-    NULL,
+    ps2mouse_read,
     NULL,
     NULL
 };

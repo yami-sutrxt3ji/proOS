@@ -51,6 +51,7 @@ int devmgr_register_device(const struct device_descriptor *desc, struct device_n
 int devmgr_unregister_device(const char *name);
 size_t devmgr_enumerate(const struct device_node **out, size_t max);
 const struct device_node *devmgr_find(const char *name);
+struct device_node *devmgr_find_node(const char *name);
 void devmgr_refresh_ramfs(void);
 
 #endif

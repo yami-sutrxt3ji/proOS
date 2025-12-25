@@ -5,6 +5,7 @@
 
 #include "blockdev.h"
 #include "bios_fallback.h"
+#include "devmgr.h"
 #include "io.h"
 #include "klog.h"
 #include "memory.h"
@@ -47,6 +48,14 @@ struct ata_device
 
 static struct ata_device primary_master;
 static uint32_t disk_index = 0;
+
+static const struct device_ops ata_disk_ops = {
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL
+};
 
 static void make_disk_name(char *buffer, size_t cap, uint32_t index)
 {
@@ -265,6 +274,17 @@ static int ata_register_device(struct ata_device *dev)
 
     if (blockdev_register(&desc, &dev->block) < 0)
         return -1;
+
+    struct device_descriptor dev_desc = {
+        name,
+        "block.disk",
+        "storage0",
+        &ata_disk_ops,
+        DEVICE_FLAG_PUBLISH,
+        dev
+    };
+    if (devmgr_register_device(&dev_desc, NULL) < 0)
+        klog_warn("ata.driver: failed to publish disk device");
 
     partition_scan_device(dev->block);
     return 0;

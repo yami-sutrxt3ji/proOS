@@ -25,6 +25,11 @@
 extern void shell_run(void);
 extern void user_init(void);
 
+#define EXTRA_FAT_DISKS 2
+
+static struct fatfs_volume extra_fat_volumes[EXTRA_FAT_DISKS];
+static void *extra_fat_buffers[EXTRA_FAT_DISKS];
+
 static void shell_task(void)
 {
     shell_run();
@@ -40,6 +45,90 @@ static void print_banner(void)
     vga_set_color(0x7, 0x0);
     vga_write_line("Type 'help' to list commands.");
     vga_write_char('\n');
+}
+
+static void make_disk_label(char *buffer, size_t cap, unsigned int index)
+{
+    if (!buffer || cap == 0)
+        return;
+
+    const char prefix[] = "Disk";
+    size_t pos = 0;
+    while (prefix[pos] && pos + 1 < cap)
+    {
+        buffer[pos] = prefix[pos];
+        ++pos;
+    }
+
+    char tmp[12];
+    size_t len = 0;
+    unsigned int value = index;
+    if (value == 0)
+    {
+        tmp[len++] = '0';
+    }
+    else
+    {
+        while (value > 0 && len < sizeof(tmp))
+        {
+            tmp[len++] = (char)('0' + (value % 10u));
+            value /= 10u;
+        }
+    }
+
+    while (len > 0 && pos + 1 < cap)
+        buffer[pos++] = tmp[--len];
+
+    buffer[pos] = '\0';
+}
+
+static void copy_bytes(uint8_t *dst, const uint8_t *src, size_t length)
+{
+    if (!dst || !src)
+        return;
+    for (size_t i = 0; i < length; ++i)
+        dst[i] = src[i];
+}
+
+static void init_extra_fat_disks(const struct boot_info *info)
+{
+    if (!info || info->fat_ptr == 0u || info->fat_size == 0u)
+        return;
+
+    const uint8_t *source = (const uint8_t *)(uintptr_t)info->fat_ptr;
+    size_t size = (size_t)info->fat_size;
+
+    for (unsigned int i = 0; i < EXTRA_FAT_DISKS; ++i)
+    {
+        if (extra_fat_buffers[i])
+            continue;
+
+        uint8_t *buffer = (uint8_t *)kalloc(size);
+        if (!buffer)
+        {
+            klog_warn("kernel: unable to allocate memory for extra FAT disk");
+            break;
+        }
+
+        copy_bytes(buffer, source, size);
+
+        int type = fatfs_init(&extra_fat_volumes[i], buffer, size);
+        if (type == FATFS_TYPE_NONE)
+        {
+            klog_warn("kernel: extra FAT image unsupported");
+            continue;
+        }
+
+        char label[16];
+        make_disk_label(label, sizeof(label), i + 1u);
+        if (fatfs_mount(&extra_fat_volumes[i], label) < 0)
+        {
+            klog_warn("kernel: failed to mount extra FAT volume");
+            continue;
+        }
+
+        extra_fat_buffers[i] = buffer;
+    }
 }
 
 void kmain(void)
@@ -84,7 +173,10 @@ void kmain(void)
         else
             klog_info("kernel: FAT16 image detected");
         if (fat16_mount_volume("Disk0") == 0)
+        {
             klog_info("kernel: FAT volume available at /Volumes/Disk0");
+            init_extra_fat_disks(info);
+        }
         else
             klog_warn("kernel: failed to expose FAT volume");
     }

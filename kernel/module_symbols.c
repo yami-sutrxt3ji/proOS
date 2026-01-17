@@ -16,6 +16,7 @@
 #include "partition.h"
 #include "bios_fallback.h"
 #include "volmgr.h"
+#include "service.h"
 
 static const struct kernel_symbol builtin_symbols[] = {
     { "klog_emit", (uintptr_t)&klog_emit },
@@ -38,6 +39,10 @@ static const struct kernel_symbol builtin_symbols[] = {
     { "ipc_cap_query", (uintptr_t)&ipc_cap_query },
     { "ipc_attach_process", (uintptr_t)&ipc_attach_process },
     { "ipc_detach_process", (uintptr_t)&ipc_detach_process },
+    { "service_register", (uintptr_t)&service_register },
+    { "service_start", (uintptr_t)&service_start },
+    { "service_pid", (uintptr_t)&service_pid },
+    { "service_grant_capabilities", (uintptr_t)&service_grant_capabilities },
     { "ipc_channel_create", (uintptr_t)&ipc_channel_create },
     { "ipc_channel_join", (uintptr_t)&ipc_channel_join },
     { "ipc_channel_leave", (uintptr_t)&ipc_channel_leave },

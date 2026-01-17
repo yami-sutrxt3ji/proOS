@@ -73,6 +73,12 @@ start_stage2:
 
     call get_bios_font
     call try_vbe_modes
+    mov byte [vbe_available], 0
+    cmp byte [vbe_available], 0
+    jne .skip_text_mode
+    mov ax, 0x0003
+    int 0x10
+.skip_text_mode:
     call enable_a20
     call setup_gdt
     call enter_pm
@@ -248,6 +254,15 @@ try_vbe_modes:
     cmp al, 32
     jne .restore
 
+    movzx eax, word [vbe_mode_info + 0x10]
+    cmp eax, 0
+    jne .have_pitch
+    mov eax, [vbe_mode_info + 0x40]
+    cmp eax, 0
+    je .restore
+.have_pitch:
+    mov [vbe_pitch], eax
+
     mov ax, 0x4F02
     mov bx, [vbe_mode_candidate]
     or bx, 0x4000
@@ -269,16 +284,6 @@ try_vbe_modes:
     xor eax, eax
     mov al, [vbe_mode_info + 0x19]
     mov [vbe_bpp], eax
-
-    movzx eax, word [vbe_mode_info + 0x10]
-    cmp eax, 0
-    jne .store_pitch
-    movzx eax, word [vbe_mode_info + 0x40]
-    cmp eax, 0
-    jne .store_pitch
-    mov eax, 0
-.store_pitch:
-    mov [vbe_pitch], eax
 
     mov eax, [vbe_mode_info + 0x28]
     mov [vbe_fb_ptr], eax

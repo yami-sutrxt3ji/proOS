@@ -18,6 +18,10 @@ enum syscall_number
     SYS_CHAN_PEEK = 9,
     SYS_GET_SERVICE_CHANNEL = 10,
     SYS_SLEEP = 11,
+    SYS_IPC_SEND = 12,
+    SYS_IPC_RECV = 13,
+    SYS_IPC_SHARE = 14,
+    SYS_SERVICE_CONNECT = 15,
     SYS_DYNAMIC_BASE = 32
 };
 

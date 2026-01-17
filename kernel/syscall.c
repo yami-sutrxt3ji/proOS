@@ -4,6 +4,7 @@
 #include "vga.h"
 #include "spinlock.h"
 #include "ipc.h"
+#include "service.h"
 
 #include "config.h"
 
@@ -105,6 +106,101 @@ static int32_t sys_sleep_handler(struct syscall_envelope *msg)
     uint32_t ticks = msg->args[0];
     process_sleep(ticks);
     return 0;
+}
+
+static int32_t sys_ipc_send_handler(struct syscall_envelope *msg)
+{
+    if (msg->argc < 3)
+        return -1;
+
+    pid_t target = (pid_t)msg->args[0];
+    const void *buffer = (const void *)(uintptr_t)msg->args[1];
+    size_t size = (size_t)msg->args[2];
+
+    if (size > CONFIG_MSG_DATA_MAX)
+        return -1;
+    if (size > 0 && !syscall_validate_user_buffer(buffer, size))
+        return -1;
+
+    uint8_t local[CONFIG_MSG_DATA_MAX];
+    if (size > 0)
+        copy_from_user((char *)local, (const char *)buffer, size);
+
+    return ipc_send(target, (size > 0) ? local : NULL, size);
+}
+
+static int32_t sys_ipc_recv_handler(struct syscall_envelope *msg)
+{
+    if (msg->argc < 3)
+        return -1;
+
+    pid_t source = (pid_t)msg->args[0];
+    void *buffer = (void *)(uintptr_t)msg->args[1];
+    size_t max = (size_t)msg->args[2];
+
+    if (max > 0 && !syscall_validate_user_buffer(buffer, max))
+        return -1;
+
+    size_t scratch_cap = (max > CONFIG_MSG_DATA_MAX) ? CONFIG_MSG_DATA_MAX : max;
+    uint8_t scratch[CONFIG_MSG_DATA_MAX];
+    uint8_t *recv_buf = (scratch_cap > 0) ? scratch : NULL;
+
+    int rc = ipc_recv(source, recv_buf, scratch_cap);
+    if (rc <= 0)
+        return rc;
+
+    if (buffer && max > 0 && recv_buf)
+    {
+        size_t available = (size_t)rc;
+        size_t copy_len = (available > max) ? max : available;
+        if (copy_len > scratch_cap)
+            copy_len = scratch_cap;
+        if (copy_len > 0)
+            copy_to_user((char *)buffer, (const char *)recv_buf, copy_len);
+    }
+
+    return rc;
+}
+
+static int32_t sys_ipc_share_handler(struct syscall_envelope *msg)
+{
+    if (msg->argc < 3)
+        return -1;
+
+    pid_t target = (pid_t)msg->args[0];
+    void *addr = (void *)(uintptr_t)msg->args[1];
+    size_t pages = (size_t)msg->args[2];
+
+    if (pages == 0)
+        return -1;
+    if (!syscall_validate_user_pointer(addr))
+        return -1;
+
+    uintptr_t end_addr = (uintptr_t)addr + (pages * (size_t)CONFIG_IPC_PAGE_SIZE);
+    if (end_addr < (uintptr_t)addr)
+        return -1;
+    if (end_addr >= CONFIG_USER_SPACE_LIMIT)
+        return -1;
+
+    return ipc_share(target, addr, pages);
+}
+
+static int32_t sys_service_connect_handler(struct syscall_envelope *msg)
+{
+    if (msg->argc < 2)
+        return -1;
+
+    enum system_service service = (enum system_service)msg->args[0];
+    uint32_t rights = msg->args[1];
+
+    struct process *proc = process_current();
+    if (!proc || proc->pid <= 0)
+        return -1;
+
+    if (service_grant_capabilities(proc->pid, service, rights) < 0)
+        return -1;
+
+    return service_pid(service);
 }
 
 static int32_t sys_send_handler(struct syscall_envelope *msg)
@@ -337,6 +433,10 @@ void syscall_init(void)
     syscall_register_handler(SYS_CHAN_PEEK, sys_chan_peek_handler, "sys_chan_peek");
     syscall_register_handler(SYS_GET_SERVICE_CHANNEL, sys_service_channel_handler, "sys_get_service_channel");
     syscall_register_handler(SYS_SLEEP, sys_sleep_handler, "sys_sleep");
+    syscall_register_handler(SYS_IPC_SEND, sys_ipc_send_handler, "sys_ipc_send");
+    syscall_register_handler(SYS_IPC_RECV, sys_ipc_recv_handler, "sys_ipc_recv");
+    syscall_register_handler(SYS_IPC_SHARE, sys_ipc_share_handler, "sys_ipc_share");
+    syscall_register_handler(SYS_SERVICE_CONNECT, sys_service_connect_handler, "sys_service_connect");
 }
 
 void syscall_handler(struct regs *frame)

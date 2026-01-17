@@ -21,9 +21,15 @@
 #include "partition.h"
 #include "volmgr.h"
 #include "bios_fallback.h"
+#include "service.h"
+#include "service_types.h"
 
 extern void shell_run(void);
 extern void user_init(void);
+extern void user_fsd(void);
+extern void user_netd(void);
+extern void user_inputd(void);
+extern void user_logd(void);
 
 #define EXTRA_FAT_DISKS 2
 
@@ -41,7 +47,7 @@ static void print_banner(void)
     vga_set_color(0xF, 0x0);
     vga_write_line("proOS (Protected Mode)");
     vga_set_color(0xA, 0x0);
-    vga_write_line("version: v0.5");
+    vga_write_line("version: v0.8 b2");
     vga_set_color(0x7, 0x0);
     vga_write_line("Type 'help' to list commands.");
     vga_write_char('\n');
@@ -88,6 +94,87 @@ static void copy_bytes(uint8_t *dst, const uint8_t *src, size_t length)
         return;
     for (size_t i = 0; i < length; ++i)
         dst[i] = src[i];
+}
+
+static size_t append_text(char *dst, size_t pos, size_t cap, const char *text)
+{
+    if (!text)
+        return pos;
+    while (*text && pos + 1 < cap)
+    {
+        dst[pos++] = *text++;
+    }
+    dst[pos] = '\0';
+    return pos;
+}
+
+static size_t append_u32_dec(char *dst, size_t pos, size_t cap, uint32_t value)
+{
+    char temp[12];
+    size_t idx = 0;
+    if (value == 0)
+        temp[idx++] = '0';
+    else
+    {
+        while (value > 0 && idx < sizeof(temp))
+        {
+            temp[idx++] = (char)('0' + (value % 10u));
+            value /= 10u;
+        }
+    }
+    while (idx > 0 && pos + 1 < cap)
+    {
+        dst[pos++] = temp[--idx];
+    }
+    dst[pos] = '\0';
+    return pos;
+}
+
+static size_t append_u32_hex(char *dst, size_t pos, size_t cap, uint32_t value)
+{
+    static const char hex[] = "0123456789ABCDEF";
+    char temp[8];
+    for (size_t i = 0; i < sizeof(temp); ++i)
+    {
+        temp[i] = hex[value & 0x0Fu];
+        value >>= 4;
+    }
+    pos = append_text(dst, pos, cap, "0x");
+    for (size_t i = 0; i < sizeof(temp) && pos + 1 < cap; ++i)
+    {
+        dst[pos++] = temp[sizeof(temp) - 1u - i];
+    }
+    dst[pos] = '\0';
+    return pos;
+}
+
+static void log_vbe_bootinfo(void)
+{
+    const struct boot_info *info = boot_info_get();
+    if (!info)
+    {
+        klog_warn("kernel: boot_info missing");
+        return;
+    }
+    if (info->magic != BOOT_INFO_MAGIC)
+    {
+        klog_warn("kernel: boot_info magic invalid");
+        return;
+    }
+
+    char line[128];
+    size_t pos = 0;
+    pos = append_text(line, pos, sizeof(line), "vbe fb_ptr=");
+    pos = append_u32_hex(line, pos, sizeof(line), info->fb_ptr);
+    pos = append_text(line, pos, sizeof(line), " pitch=");
+    pos = append_u32_dec(line, pos, sizeof(line), info->fb_pitch);
+    pos = append_text(line, pos, sizeof(line), " width=");
+    pos = append_u32_dec(line, pos, sizeof(line), info->fb_width);
+    pos = append_text(line, pos, sizeof(line), " height=");
+    pos = append_u32_dec(line, pos, sizeof(line), info->fb_height);
+    pos = append_text(line, pos, sizeof(line), " bpp=");
+    pos = append_u32_dec(line, pos, sizeof(line), info->fb_bpp);
+    klog_info(line);
 }
 
 static void init_extra_fat_disks(const struct boot_info *info)
@@ -146,8 +233,10 @@ void kmain(void)
     vbe_init();
     vga_init();
     vga_clear();
+    service_system_init();
     klog_init();
     klog_info("kernel: video initialized");
+    log_vbe_bootinfo();
     klog_info("kernel: memory initialized");
     if (vfs_init() < 0)
         klog_error("kernel: vfs initialization failed");
@@ -191,6 +280,7 @@ void kmain(void)
     klog_info("kernel: PIC configured");
     pit_init(250);
     klog_info("kernel: PIT started");
+    klog_info("kernel: service manager ready");
     ipc_system_init();
     klog_info("kernel: IPC system ready");
     devmgr_init();
@@ -203,6 +293,14 @@ void kmain(void)
     klog_info("kernel: process system initialized");
     syscall_init();
     klog_info("kernel: syscall layer ready");
+
+    uint32_t svc_rights = IPC_RIGHT_SEND | IPC_RIGHT_RECV;
+    service_register(SYSTEM_SERVICE_FSD, "fsd", user_fsd, svc_rights);
+    service_register(SYSTEM_SERVICE_NETD, "netd", user_netd, svc_rights);
+    service_register(SYSTEM_SERVICE_INPUTD, "inputd", user_inputd, svc_rights);
+    service_register(SYSTEM_SERVICE_LOGD, "logd", user_logd, svc_rights);
+    service_bootstrap();
+    klog_info("kernel: services launched");
     if (process_create(user_init, PROC_STACK_SIZE) < 0)
     {
         vga_write_line("init process failed");

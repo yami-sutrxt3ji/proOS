@@ -293,6 +293,15 @@ int vbe_init(void)
     fb_pitch_pixels = bootinfo->fb_pitch / 4;
     fb_w = bootinfo->fb_width;
     fb_h = bootinfo->fb_height;
+    if (!fb_ptr || bootinfo->fb_pitch == 0 || fb_pitch_pixels == 0 || fb_w == 0 || fb_h == 0)
+    {
+        fb_ptr = NULL;
+        fb_pitch_pixels = 0;
+        fb_w = 0;
+        fb_h = 0;
+        vbe_ready = 0;
+        return 0;
+    }
     vbe_ready = 1;
     update_console_geometry();
 

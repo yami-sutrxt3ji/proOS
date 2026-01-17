@@ -2542,9 +2542,13 @@ static void command_shutdown(void)
 
 static void shell_render_prompt(void)
 {
+    const char *path_display = shell_cwd;
+    if (!path_display || path_display[0] == '\0')
+        path_display = "/";
+
     vga_set_color(0xB, 0x0);
     vga_write("proOS ");
-    vga_write(shell_cwd);
+    vga_write(path_display);
     vga_write(" >> ");
     vga_set_color(0x7, 0x0);
 }
@@ -2681,6 +2685,10 @@ static void shell_execute(char *line)
 
 void shell_run(void)
 {
+    /* Ensure cwd is clean */
+    shell_cwd[0] = '/';
+    shell_cwd[1] = '\0';
+
     char buffer[INPUT_MAX];
 
     while (1)

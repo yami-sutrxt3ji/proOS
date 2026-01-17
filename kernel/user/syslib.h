@@ -3,6 +3,7 @@
 
 #include "../syscall.h"
 #include "../ipc_types.h"
+#include "../service_types.h"
 #include <stddef.h>
 #include <stdint.h>
 
@@ -41,6 +42,26 @@ static inline int sys_spawn(void (*entry)(void), size_t stack_size)
 static inline int sys_sleep(uint32_t ticks)
 {
     return (int)sys_call(SYS_SLEEP, 1, ticks, 0, 0, 0);
+}
+
+static inline int sys_ipc_send(pid_t target, const void *buffer, size_t size)
+{
+    return (int)sys_call(SYS_IPC_SEND, 3, (uint32_t)target, (uint32_t)(uintptr_t)buffer, (uint32_t)size, 0);
+}
+
+static inline int sys_ipc_recv(pid_t source, void *buffer, size_t max)
+{
+    return (int)sys_call(SYS_IPC_RECV, 3, (uint32_t)source, (uint32_t)(uintptr_t)buffer, (uint32_t)max, 0);
+}
+
+static inline int sys_ipc_share(pid_t target, void *addr, size_t pages)
+{
+    return (int)sys_call(SYS_IPC_SHARE, 3, (uint32_t)target, (uint32_t)(uintptr_t)addr, (uint32_t)pages, 0);
+}
+
+static inline int sys_service_connect(enum system_service service, uint32_t rights)
+{
+    return (int)sys_call(SYS_SERVICE_CONNECT, 2, (uint32_t)service, rights, 0, 0);
 }
 
 static inline int sys_chan_create(const char *name, size_t name_len, uint32_t flags)

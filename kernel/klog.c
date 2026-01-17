@@ -3,6 +3,8 @@
 #include "klog.h"
 #include "string.h"
 #include "ipc.h"
+#include "service.h"
+#include "service_types.h"
 #include "vfs.h"
 
 #ifndef CONFIG_KLOG_CAPACITY
@@ -122,11 +124,6 @@ static void klog_publish_channel(uint32_t seq, uint8_t level, const char *module
 {
     if (!ipc_is_initialized() || !text)
         return;
-    if (logger_channel_id < 0)
-        logger_channel_id = ipc_get_service_channel(IPC_SERVICE_LOGGER);
-    if (logger_channel_id < 0)
-        return;
-
     struct klog_ipc_event payload;
     payload.seq = seq;
     payload.level = level;
@@ -141,7 +138,17 @@ static void klog_publish_channel(uint32_t seq, uint8_t level, const char *module
     }
     payload.text[i] = '\0';
 
-    ipc_channel_send(logger_channel_id, 0, level, 0, &payload, sizeof(payload), 0);
+    pid_t logd_pid = service_pid(SYSTEM_SERVICE_LOGD);
+    if (logd_pid > 0)
+    {
+        if (ipc_send(logd_pid, &payload, sizeof(payload)) >= 0)
+            return;
+    }
+
+    if (logger_channel_id < 0)
+        logger_channel_id = ipc_get_service_channel(IPC_SERVICE_LOGGER);
+    if (logger_channel_id >= 0)
+        ipc_channel_send(logger_channel_id, 0, level, 0, &payload, sizeof(payload), 0);
 }
 
 static const char *sanitize_module(const char *module)

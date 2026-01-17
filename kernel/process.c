@@ -1,5 +1,6 @@
 #include "proc.h"
 #include "ipc.h"
+#include "service.h"
 #include "vga.h"
 #include "klog.h"
 #include "pit.h"
@@ -681,6 +682,7 @@ void process_exit(int code)
 		return;
 
 	ipc_process_cleanup(proc);
+ 	service_handle_exit(proc->pid);
 
 	scheduler_remove_from_sleep(proc);
 	proc->on_run_queue = 0;

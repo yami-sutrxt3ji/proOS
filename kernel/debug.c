@@ -7,6 +7,7 @@
 #include "devmgr.h"
 #include "vfs.h"
 #include "klog.h"
+#include "interrupts.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -68,6 +69,23 @@ static void append_hex32(char *dst, size_t *pos, size_t cap, uint32_t value)
 static void append_newline(char *dst, size_t *pos, size_t cap)
 {
     append_char(dst, pos, cap, '\n');
+}
+
+static inline uint32_t debug_read_dr6(void)
+{
+    uint32_t value;
+    __asm__ __volatile__("movl %%dr6, %0" : "=r"(value));
+    return value;
+}
+
+static inline void debug_write_dr6(uint32_t value)
+{
+    __asm__ __volatile__("movl %0, %%dr6" :: "r"(value));
+}
+
+static inline void debug_write_dr7(uint32_t value)
+{
+    __asm__ __volatile__("movl %0, %%dr7" :: "r"(value));
 }
 
 void debug_publish_memory_info(void)
@@ -225,6 +243,54 @@ void debug_publish_device_list(void)
         line[pos] = '\0';
         vfs_append("/System/devices", line, pos);
     }
+}
+
+static unsigned int debug_trap_report_count = 0;
+
+static void debug_log_trap(uint32_t eip, uint32_t original_flags, uint32_t status)
+{
+    if (debug_trap_report_count >= 4u)
+        return;
+
+    char line[192];
+    size_t pos = 0;
+    append_text(line, &pos, sizeof(line), "debug: cleared debug trap at eip ");
+    append_hex32(line, &pos, sizeof(line), eip);
+    struct process *proc = process_current();
+    if (proc)
+    {
+        append_text(line, &pos, sizeof(line), " pid=");
+        append_decimal(line, &pos, sizeof(line), (uint32_t)proc->pid);
+    }
+    append_text(line, &pos, sizeof(line), " flags ");
+    append_hex32(line, &pos, sizeof(line), original_flags);
+    append_text(line, &pos, sizeof(line), " dr6 ");
+    append_hex32(line, &pos, sizeof(line), status);
+    append_newline(line, &pos, sizeof(line));
+    line[pos] = '\0';
+    klog_warn(line);
+    ++debug_trap_report_count;
+}
+
+static void debug_exception_handler(struct regs *frame)
+{
+    if (!frame)
+        return;
+
+    uint32_t status = debug_read_dr6();
+    debug_write_dr6(0u);
+    debug_write_dr7(0u);
+
+    uint32_t original_flags = frame->eflags;
+    uint32_t cleared = original_flags & ~(1u << 8);
+    frame->eflags = cleared | (1u << 16);
+
+    debug_log_trap(frame->eip, original_flags, status);
+}
+
+void debug_trap_init(void)
+{
+    isr_install_handler(1, debug_exception_handler);
 }
 
 void debug_publish_all(void)

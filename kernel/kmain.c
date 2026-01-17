@@ -23,6 +23,8 @@
 #include "bios_fallback.h"
 #include "service.h"
 #include "service_types.h"
+#include "net.h"
+#include "e1000.h"
 
 extern void shell_run(void);
 extern void user_init(void);
@@ -275,6 +277,7 @@ void kmain(void)
     }
 
     idt_init();
+    debug_trap_init();
     klog_info("kernel: IDT configured");
     pic_init();
     klog_info("kernel: PIC configured");
@@ -285,6 +288,10 @@ void kmain(void)
     klog_info("kernel: IPC system ready");
     devmgr_init();
     klog_info("kernel: device manager ready");
+
+    net_init();
+
+    e1000_driver_init();
     module_system_init();
     klog_info("kernel: module system online");
     volmgr_init();

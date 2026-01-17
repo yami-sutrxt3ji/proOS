@@ -18,11 +18,20 @@
 #include "debug.h"
 #include "vbe.h"
 #include "volmgr.h"
+#include "net.h"
+#include "arp.h"
+#include "ipv4.h"
+#include "icmp.h"
 
 #define SHELL_PROMPT "proOS >> "
 #define INPUT_MAX 256
 #define SHELL_HISTORY_CAPACITY 32
 #define SHELL_TREE_MAX_DEPTH 8
+#define SHELL_PING_DEFAULT_COUNT 4
+#define SHELL_PING_MAX_COUNT 100
+#define SHELL_PING_TIMEOUT_TICKS 250u
+#define SHELL_PING_INTERVAL_TICKS 75u
+#define SHELL_PING_ARP_WAIT_TICKS 250u
 
 static char shell_history[SHELL_HISTORY_CAPACITY][INPUT_MAX];
 static size_t shell_history_count = 0;
@@ -726,6 +735,241 @@ static void write_byte_hex(uint8_t value, char *out)
     out[2] = '\0';
 }
 
+static void format_mac_address(const uint8_t mac[6], char *out, size_t capacity)
+{
+    if (!mac || !out || capacity == 0)
+        return;
+
+    size_t pos = 0;
+    for (size_t i = 0; i < 6 && pos + 2 < capacity; ++i)
+    {
+        char hex[3];
+        write_byte_hex(mac[i], hex);
+        if (pos + 2 >= capacity)
+            break;
+        out[pos++] = hex[0];
+        out[pos++] = hex[1];
+        if (i < 5 && pos < capacity - 1)
+            out[pos++] = ':';
+    }
+
+    if (pos >= capacity)
+        pos = capacity - 1;
+    out[pos] = '\0';
+}
+
+static void format_ipv4_address(const uint8_t ipv4[4], char *out, size_t capacity)
+{
+    if (!ipv4 || !out || capacity == 0)
+        return;
+
+    size_t pos = 0;
+    for (size_t i = 0; i < 4; ++i)
+    {
+        unsigned int value = ipv4[i];
+        char digits[3];
+        size_t digit_count = 0;
+
+        if (value == 0)
+        {
+            if (pos < capacity - 1)
+                out[pos++] = '0';
+        }
+        else
+        {
+            while (value > 0 && digit_count < sizeof(digits))
+            {
+                digits[digit_count++] = (char)('0' + (value % 10u));
+                value /= 10u;
+            }
+
+            while (digit_count > 0 && pos < capacity - 1)
+                out[pos++] = digits[--digit_count];
+        }
+
+        if (i < 3 && pos < capacity - 1)
+            out[pos++] = '.';
+    }
+    out[pos] = '\0';
+}
+
+static int parse_ipv4_address(const char *text, uint8_t out[4])
+{
+    if (!text || !out)
+        return 0;
+
+    uint32_t value = 0;
+    int segment = 0;
+    int digits = 0;
+
+    while (*text)
+    {
+        char c = *text++;
+        if (c == '.')
+        {
+            if (segment >= 3 || digits == 0 || value > 255u)
+                return 0;
+            out[segment++] = (uint8_t)value;
+            value = 0;
+            digits = 0;
+            continue;
+        }
+
+        if (c < '0' || c > '9')
+            return 0;
+
+        value = value * 10u + (uint32_t)(c - '0');
+        if (value > 255u)
+            return 0;
+        ++digits;
+    }
+
+    if (segment != 3 || digits == 0 || value > 255u)
+        return 0;
+
+    out[segment] = (uint8_t)value;
+    return 1;
+}
+
+static struct net_device *shell_default_net_device(void)
+{
+    if (net_device_count() == 0)
+        return NULL;
+    return net_get_device(0);
+}
+
+static void shell_flush_icmp_notifications(void)
+{
+    uint16_t identifier;
+    uint16_t sequence;
+    uint8_t src[4];
+
+    while (icmp_take_any_echo_reply(&identifier, &sequence, src))
+    {
+        char ip_text[32];
+        format_ipv4_address(src, ip_text, sizeof(ip_text));
+
+        char seq_buf[32];
+        write_u64((uint64_t)sequence, seq_buf);
+
+        char id_buf[32];
+        write_hex32((uint32_t)identifier, id_buf);
+
+        vga_write("net: echo reply from ");
+        vga_write(ip_text);
+        vga_write(" seq=");
+        vga_write(seq_buf);
+        vga_write(" id=");
+        vga_write_line(id_buf);
+    }
+}
+
+static int shell_ping_wait_for_arp(struct net_device *dev, const uint8_t target[4], uint64_t deadline)
+{
+    if (!dev || !target)
+        return -1;
+
+    uint8_t mac_dummy[6];
+
+    while (1)
+    {
+        if (arp_cache_lookup(dev, target, mac_dummy))
+            return 1;
+
+        uint64_t now = get_ticks();
+        if (now >= deadline)
+            break;
+
+        int events = net_poll_devices();
+        if (events < 0)
+            return -1;
+
+        if (arp_cache_lookup(dev, target, mac_dummy))
+            return 1;
+
+        if (events == 0)
+            process_sleep(1);
+        else
+            process_yield();
+    }
+
+    return arp_cache_lookup(dev, target, mac_dummy) ? 1 : 0;
+}
+
+static int shell_ping_transmit(struct net_device *dev, const uint8_t target[4], uint16_t identifier, uint16_t sequence, uint64_t deadline, uint64_t *sent_tick)
+{
+    if (!dev || !target)
+        return -1;
+
+    while (1)
+    {
+        int rc = icmp_send_echo_request(dev, target, identifier, sequence);
+        if (rc == 0)
+        {
+            if (sent_tick)
+                *sent_tick = get_ticks();
+            return 1;
+        }
+
+        if (rc < 0)
+            return -1;
+
+        int arp_status = shell_ping_wait_for_arp(dev, target, deadline);
+        if (arp_status <= 0)
+            return arp_status;
+    }
+}
+
+static int shell_ping_wait_for_reply(uint16_t identifier, uint16_t sequence, uint64_t send_tick, uint64_t deadline, uint32_t *rtt_ms, uint8_t src_ipv4[4])
+{
+    while (1)
+    {
+        if (icmp_take_echo_reply(identifier, sequence, src_ipv4))
+        {
+            uint64_t now = get_ticks();
+            if (now < send_tick)
+                now = send_tick;
+            if (rtt_ms)
+            {
+                uint64_t ticks_elapsed = now - send_tick;
+                *rtt_ms = (uint32_t)(ticks_elapsed * 10u);
+            }
+            return 1;
+        }
+
+        uint64_t now = get_ticks();
+        if (now >= deadline)
+            break;
+
+        int events = net_poll_devices();
+        if (events < 0)
+            return -1;
+
+        if (icmp_take_echo_reply(identifier, sequence, src_ipv4))
+        {
+            uint64_t recv_tick = get_ticks();
+            if (recv_tick < send_tick)
+                recv_tick = send_tick;
+            if (rtt_ms)
+            {
+                uint64_t ticks_elapsed = recv_tick - send_tick;
+                *rtt_ms = (uint32_t)(ticks_elapsed * 10u);
+            }
+            return 1;
+        }
+
+        if (events == 0)
+            process_sleep(1);
+        else
+            process_yield();
+    }
+
+    return 0;
+}
+
+static uint16_t shell_ping_identifier = 0x1234u;
+static uint16_t shell_ping_sequence;
+
 static int parse_u32_token(const char *text, uint32_t *out_value)
 {
     if (!text || !out_value || *text == '\0')
@@ -858,6 +1102,7 @@ static void command_help(void)
     vga_write_line("  volumes - list detected volumes");
     vga_write_line("  mount - list active mounts");
     vga_write_line("  mod    - module control (list/load/unload .kmd)");
+    vga_write_line("  net    - networking utilities");
     vga_write_line("  gfx    - draw compositor demo");
     vga_write_line("  kdlg   - show kernel log");
     vga_write_line("  kdlvl [lvl] - adjust log verbosity");
@@ -2081,6 +2326,651 @@ static void command_devlist(void)
     }
 }
 
+static void command_net_help(void)
+{
+    vga_write_line("Usage: net <command>");
+    vga_write_line("  net list        - show network interfaces");
+    vga_write_line("  net poll [n|watch] - service network devices");
+    vga_write_line("  net arp <ipv4>  - resolve/display ARP entry");
+    vga_write_line("  net ping <ipv4> - send ICMP echo request");
+    vga_write_line("  net ip [ipv4]   - show or set local IPv4");
+}
+
+static void command_net_list(void)
+{
+    size_t count = net_device_count();
+    if (count == 0)
+    {
+        vga_write_line("net: no interfaces registered");
+        return;
+    }
+
+    vga_write_line("Name       MAC");
+    for (size_t i = 0; i < count; ++i)
+    {
+        struct net_device *dev = net_get_device(i);
+        if (!dev)
+            continue;
+
+        char line[64];
+        size_t pos = 0;
+        buffer_append(line, &pos, sizeof(line), "  ");
+        buffer_append(line, &pos, sizeof(line), dev->name);
+        while (pos < 12 && pos < sizeof(line) - 1)
+            line[pos++] = ' ';
+
+        if (pos < sizeof(line) - 1)
+            line[pos++] = ' ';
+
+        char macbuf[32];
+        format_mac_address(dev->mac, macbuf, sizeof(macbuf));
+        buffer_append(line, &pos, sizeof(line), macbuf);
+        line[pos] = '\0';
+        vga_write_line(line);
+    }
+}
+
+static void command_net_poll(const char *args)
+{
+    if (net_device_count() == 0)
+    {
+        vga_write_line("net: no interfaces registered");
+        return;
+    }
+
+    const char *token = skip_spaces(args ? args : "");
+    int iterations = 1;
+    int watch = 0;
+
+    if (*token)
+    {
+        char word[16];
+        size_t idx = 0;
+        while (token[idx] && token[idx] != ' ' && idx + 1 < sizeof(word))
+        {
+            word[idx] = token[idx];
+            ++idx;
+        }
+
+        if (token[idx] != '\0' && token[idx] != ' ')
+        {
+            vga_write_line("net: argument too long");
+            return;
+        }
+
+        word[idx] = '\0';
+        const char *extra = skip_spaces(token + idx);
+        if (*extra)
+        {
+            vga_write_line("Usage: net poll [n|watch]");
+            return;
+        }
+
+        if (shell_str_equals(word, "watch"))
+        {
+            watch = 1;
+        }
+        else if (!parse_positive_int(word, &iterations) || iterations <= 0)
+        {
+            vga_write_line("net: invalid iteration count");
+            return;
+        }
+    }
+
+    uint64_t total_events = 0;
+    int performed = 0;
+
+    if (watch)
+    {
+        const int max_loops = 64;
+        while (performed < max_loops)
+        {
+            int rc = net_poll_devices();
+            if (rc < 0)
+            {
+                vga_write_line("net: poll failed");
+                return;
+            }
+
+            ++performed;
+            total_events += (uint64_t)rc;
+            if (rc == 0)
+                break;
+
+            shell_flush_icmp_notifications();
+        }
+
+        if (performed >= 64)
+            vga_write_line("net: watch limit reached");
+    }
+    else
+    {
+        for (int i = 0; i < iterations; ++i)
+        {
+            int rc = net_poll_devices();
+            if (rc < 0)
+            {
+                vga_write_line("net: poll failed");
+                return;
+            }
+
+            ++performed;
+            total_events += (uint64_t)rc;
+            shell_flush_icmp_notifications();
+            if (rc == 0)
+                break;
+        }
+    }
+
+    shell_flush_icmp_notifications();
+
+    char events_buf[32];
+    char iterations_buf[32];
+    write_u64(total_events, events_buf);
+    write_u64((uint64_t)performed, iterations_buf);
+
+    char line[96];
+    size_t pos = 0;
+    buffer_append(line, &pos, sizeof(line), "net: polled ");
+    buffer_append(line, &pos, sizeof(line), iterations_buf);
+    buffer_append(line, &pos, sizeof(line), " time(s), events=");
+    buffer_append(line, &pos, sizeof(line), events_buf);
+    line[pos] = '\0';
+    vga_write_line(line);
+}
+
+static void command_net_arp(const char *args)
+{
+    struct net_device *dev = shell_default_net_device();
+    if (!dev)
+    {
+        vga_write_line("net: no interfaces registered");
+        return;
+    }
+
+    const char *token = skip_spaces(args ? args : "");
+    if (*token == '\0')
+    {
+        vga_write_line("Usage: net arp <ipv4>");
+        return;
+    }
+
+    char ip_text[32];
+    size_t idx = 0;
+    while (token[idx] && token[idx] != ' ' && idx + 1 < sizeof(ip_text))
+    {
+        ip_text[idx] = token[idx];
+        ++idx;
+    }
+
+    if (token[idx] != '\0' && token[idx] != ' ')
+    {
+        vga_write_line("net: address too long");
+        return;
+    }
+
+    ip_text[idx] = '\0';
+    const char *extra = skip_spaces(token + idx);
+    if (*extra)
+    {
+        vga_write_line("Usage: net arp <ipv4>");
+        return;
+    }
+
+    uint8_t target[4];
+    if (!parse_ipv4_address(ip_text, target))
+    {
+        vga_write_line("net: invalid IPv4 address");
+        return;
+    }
+
+    uint8_t mac[6];
+    if (arp_cache_lookup(dev, target, mac))
+    {
+        char line[96];
+        size_t pos = 0;
+        buffer_append(line, &pos, sizeof(line), "net: ");
+        buffer_append(line, &pos, sizeof(line), dev->name);
+        buffer_append(line, &pos, sizeof(line), " -> ");
+
+        char ip_formatted[32];
+        format_ipv4_address(target, ip_formatted, sizeof(ip_formatted));
+        buffer_append(line, &pos, sizeof(line), ip_formatted);
+        buffer_append(line, &pos, sizeof(line), " is at ");
+
+        char mac_text[32];
+        format_mac_address(mac, mac_text, sizeof(mac_text));
+        buffer_append(line, &pos, sizeof(line), mac_text);
+        line[pos] = '\0';
+        vga_write_line(line);
+        return;
+    }
+
+    int rc = arp_resolve(dev, target, mac);
+    if (rc < 0)
+    {
+        vga_write_line("net: failed to send ARP request");
+        return;
+    }
+
+    if (rc == 0)
+    {
+        char line[96];
+        size_t pos = 0;
+        buffer_append(line, &pos, sizeof(line), "net: ");
+        buffer_append(line, &pos, sizeof(line), dev->name);
+        buffer_append(line, &pos, sizeof(line), " -> ");
+
+        char ip_formatted[32];
+        format_ipv4_address(target, ip_formatted, sizeof(ip_formatted));
+        buffer_append(line, &pos, sizeof(line), ip_formatted);
+        buffer_append(line, &pos, sizeof(line), " is at ");
+
+        char mac_text[32];
+        format_mac_address(mac, mac_text, sizeof(mac_text));
+        buffer_append(line, &pos, sizeof(line), mac_text);
+        line[pos] = '\0';
+        vga_write_line(line);
+        return;
+    }
+
+    char message[112];
+    size_t pos = 0;
+    buffer_append(message, &pos, sizeof(message), "net: ARP request sent for ");
+    char ip_formatted[32];
+    format_ipv4_address(target, ip_formatted, sizeof(ip_formatted));
+    buffer_append(message, &pos, sizeof(message), ip_formatted);
+    buffer_append(message, &pos, sizeof(message), " on ");
+    buffer_append(message, &pos, sizeof(message), dev->name);
+    message[pos] = '\0';
+    vga_write_line(message);
+    vga_write_line("net: run 'net poll' to service responses");
+}
+
+static void command_net_ping(const char *args)
+{
+    struct net_device *dev = shell_default_net_device();
+    if (!dev)
+    {
+        vga_write_line("net: no interfaces registered");
+        return;
+    }
+
+    const char *token = skip_spaces(args ? args : "");
+    if (*token == '\0')
+    {
+        vga_write_line("Usage: net ping <ipv4> [count]");
+        return;
+    }
+
+    char ip_text[32];
+    size_t idx = 0;
+    while (token[idx] && token[idx] != ' ' && idx + 1 < sizeof(ip_text))
+    {
+        ip_text[idx] = token[idx];
+        ++idx;
+    }
+
+    if (token[idx] != '\0' && token[idx] != ' ')
+    {
+        vga_write_line("net: address too long");
+        return;
+    }
+
+    ip_text[idx] = '\0';
+    const char *rest = skip_spaces(token + idx);
+
+    int count = SHELL_PING_DEFAULT_COUNT;
+    if (*rest)
+    {
+        char count_text[16];
+        size_t cidx = 0;
+        while (rest[cidx] && rest[cidx] != ' ' && cidx + 1 < sizeof(count_text))
+        {
+            count_text[cidx] = rest[cidx];
+            ++cidx;
+        }
+
+        if (rest[cidx] != '\0' && rest[cidx] != ' ')
+        {
+            vga_write_line("net: argument too long");
+            return;
+        }
+
+        count_text[cidx] = '\0';
+        const char *after = skip_spaces(rest + cidx);
+        if (*after)
+        {
+            vga_write_line("Usage: net ping <ipv4> [count]");
+            return;
+        }
+
+        if (!parse_positive_int(count_text, &count) || count <= 0)
+        {
+            vga_write_line("net: invalid count");
+            return;
+        }
+
+        if (count > SHELL_PING_MAX_COUNT)
+        {
+            vga_write_line("net: count too large");
+            return;
+        }
+    }
+
+    uint8_t target[4];
+    if (!parse_ipv4_address(ip_text, target))
+    {
+        vga_write_line("net: invalid IPv4 address");
+        return;
+    }
+
+    icmp_clear_echo_replies();
+
+    vga_write("net: pinging ");
+    vga_write(ip_text);
+    vga_write_line(" with 32 bytes of data");
+
+    int sent = 0;
+    int received = 0;
+    uint32_t min_rtt = UINT32_MAX;
+    uint32_t max_rtt = 0;
+    uint32_t total_rtt_ms = 0;
+    int abort_ping = 0;
+
+    for (int i = 0; i < count; ++i)
+    {
+        ++sent;
+        uint16_t sequence = ++shell_ping_sequence;
+        uint64_t arp_deadline = get_ticks() + SHELL_PING_ARP_WAIT_TICKS;
+        uint64_t send_tick = 0;
+
+        int tx_status = shell_ping_transmit(dev, target, shell_ping_identifier, sequence, arp_deadline, &send_tick);
+        if (tx_status < 0)
+        {
+            vga_write_line("net: ping transmit failed");
+            abort_ping = 1;
+            break;
+        }
+
+        if (tx_status == 0)
+        {
+            vga_write_line("net: ARP resolution timed out");
+        }
+        else
+        {
+            uint32_t rtt_ms = 0;
+            uint8_t reply_src[4];
+            uint64_t reply_deadline = send_tick + SHELL_PING_TIMEOUT_TICKS;
+            int reply_status = shell_ping_wait_for_reply(shell_ping_identifier, sequence, send_tick, reply_deadline, &rtt_ms, reply_src);
+
+            if (reply_status < 0)
+            {
+                vga_write_line("net: poll failed during ping");
+                abort_ping = 1;
+                break;
+            }
+
+            if (reply_status == 0)
+            {
+                vga_write_line("net: request timed out");
+            }
+            else
+            {
+                ++received;
+                if (rtt_ms < min_rtt)
+                    min_rtt = rtt_ms;
+                if (rtt_ms > max_rtt)
+                    max_rtt = rtt_ms;
+                if (UINT32_MAX - total_rtt_ms < rtt_ms)
+                    total_rtt_ms = UINT32_MAX;
+                else
+                    total_rtt_ms += rtt_ms;
+
+                char reply_ip[32];
+                format_ipv4_address(reply_src, reply_ip, sizeof(reply_ip));
+
+                char seq_buf[32];
+                write_u64((uint64_t)sequence, seq_buf);
+
+                char time_buf[32];
+                write_u64((uint64_t)rtt_ms, time_buf);
+
+                vga_write("net: reply from ");
+                vga_write(reply_ip);
+                vga_write(" seq=");
+                vga_write(seq_buf);
+                vga_write(" time=");
+                vga_write(time_buf);
+                vga_write_line("ms");
+            }
+        }
+
+        if (abort_ping)
+            break;
+
+        if (i + 1 < count)
+        {
+            uint64_t target_tick = get_ticks() + SHELL_PING_INTERVAL_TICKS;
+            while (get_ticks() < target_tick)
+            {
+                int events = net_poll_devices();
+                if (events < 0)
+                {
+                    vga_write_line("net: poll failed during interval");
+                    abort_ping = 1;
+                    break;
+                }
+                if (events == 0)
+                    process_sleep(1);
+                else
+                    process_yield();
+            }
+            if (abort_ping)
+                break;
+        }
+    }
+
+    int lost = sent - received;
+    if (lost < 0)
+        lost = 0;
+
+    vga_write("net: Ping statistics for ");
+    vga_write(ip_text);
+    vga_write_line("");
+
+    char sent_buf[32];
+    char recv_buf[32];
+    char lost_buf[32];
+    char loss_percent_buf[32];
+    write_u64((uint64_t)sent, sent_buf);
+    write_u64((uint64_t)received, recv_buf);
+    write_u64((uint64_t)lost, lost_buf);
+
+    uint32_t loss_percent = 0;
+    if (sent > 0)
+    {
+        uint32_t lost_u32 = (lost < 0) ? 0u : (uint32_t)lost;
+        uint32_t sent_u32 = (sent < 0) ? 0u : (uint32_t)sent;
+        loss_percent = (lost_u32 * 100u) / sent_u32;
+    }
+    write_u64((uint64_t)loss_percent, loss_percent_buf);
+
+    vga_write("net:     Packets: Sent = ");
+    vga_write(sent_buf);
+    vga_write(", Received = ");
+    vga_write(recv_buf);
+    vga_write(", Lost = ");
+    vga_write(lost_buf);
+    vga_write(" (");
+    vga_write(loss_percent_buf);
+    vga_write_line("% loss)");
+
+    if (received > 0)
+    {
+        uint32_t avg_rtt = 0;
+        if (received > 0)
+            avg_rtt = total_rtt_ms / (uint32_t)received;
+
+        char min_buf[32];
+        char max_buf[32];
+        char avg_buf[32];
+        write_u64((uint64_t)min_rtt, min_buf);
+        write_u64((uint64_t)max_rtt, max_buf);
+        write_u64((uint64_t)avg_rtt, avg_buf);
+
+        vga_write("net:     RTT min/avg/max = ");
+        vga_write(min_buf);
+        vga_write("/");
+        vga_write(avg_buf);
+        vga_write("/");
+        vga_write(max_buf);
+        vga_write_line(" ms");
+    }
+}
+
+static void command_net_ip(const char *args)
+{
+    uint8_t current[4];
+    ipv4_get_address(current);
+
+    const char *token = skip_spaces(args ? args : "");
+    if (*token == '\0')
+    {
+        char line[96];
+        size_t pos = 0;
+        buffer_append(line, &pos, sizeof(line), "net: local IPv4 ");
+
+        char ip_text[32];
+        format_ipv4_address(current, ip_text, sizeof(ip_text));
+        buffer_append(line, &pos, sizeof(line), ip_text);
+
+        int configured = 0;
+        for (size_t i = 0; i < 4; ++i)
+        {
+            if (current[i] != 0)
+            {
+                configured = 1;
+                break;
+            }
+        }
+
+        if (!configured)
+            buffer_append(line, &pos, sizeof(line), " (unset)");
+
+        line[pos] = '\0';
+        vga_write_line(line);
+        return;
+    }
+
+    char ip_text[32];
+    size_t idx = 0;
+    while (token[idx] && token[idx] != ' ' && idx + 1 < sizeof(ip_text))
+    {
+        ip_text[idx] = token[idx];
+        ++idx;
+    }
+
+    if (token[idx] != '\0' && token[idx] != ' ')
+    {
+        vga_write_line("net: address too long");
+        return;
+    }
+
+    ip_text[idx] = '\0';
+    const char *extra = skip_spaces(token + idx);
+    if (*extra)
+    {
+        vga_write_line("Usage: net ip [ipv4]");
+        return;
+    }
+
+    uint8_t addr[4];
+    if (!parse_ipv4_address(ip_text, addr))
+    {
+        vga_write_line("net: invalid IPv4 address");
+        return;
+    }
+
+    ipv4_set_address(addr);
+
+    char line[96];
+    size_t pos = 0;
+    buffer_append(line, &pos, sizeof(line), "net: local IPv4 set to ");
+    char formatted[32];
+    format_ipv4_address(addr, formatted, sizeof(formatted));
+    buffer_append(line, &pos, sizeof(line), formatted);
+    line[pos] = '\0';
+    vga_write_line(line);
+}
+
+static void command_net(const char *args)
+{
+    const char *sub = skip_spaces(args ? args : "");
+    if (*sub == '\0')
+    {
+        command_net_help();
+        return;
+    }
+
+    char token[8];
+    size_t idx = 0;
+    while (sub[idx] && sub[idx] != ' ' && idx + 1 < sizeof(token))
+    {
+        token[idx] = sub[idx];
+        ++idx;
+    }
+
+    if (sub[idx] != '\0' && sub[idx] != ' ')
+    {
+        vga_write_line("net: command too long");
+        return;
+    }
+
+    token[idx] = '\0';
+    const char *rest = skip_spaces(sub + idx);
+
+    if (shell_str_equals(token, "help"))
+    {
+        if (*rest)
+        {
+            vga_write_line("Usage: net help");
+            return;
+        }
+        command_net_help();
+    }
+    else if (shell_str_equals(token, "list"))
+    {
+        if (*rest)
+        {
+            vga_write_line("Usage: net list");
+            return;
+        }
+        command_net_list();
+    }
+    else if (shell_str_equals(token, "poll"))
+    {
+        command_net_poll(rest);
+    }
+    else if (shell_str_equals(token, "arp"))
+    {
+        command_net_arp(rest);
+    }
+    else if (shell_str_equals(token, "ping"))
+    {
+        command_net_ping(rest);
+    }
+    else if (shell_str_equals(token, "ip"))
+    {
+        command_net_ip(rest);
+    }
+    else
+    {
+        vga_write_line("net: unknown command");
+        command_net_help();
+    }
+}
+
 static void command_memdump(const char *args)
 {
     const char *cursor = skip_spaces(args);
@@ -2640,6 +3530,10 @@ static void shell_execute(char *line)
     else if (shell_str_equals(cursor, "mod") || shell_str_starts_with(cursor, "mod "))
     {
         command_mod(cursor + 3);
+    }
+    else if (shell_str_equals(cursor, "net") || shell_str_starts_with(cursor, "net "))
+    {
+        command_net(cursor + 3);
     }
     else if (shell_str_equals(cursor, "gfx"))
     {

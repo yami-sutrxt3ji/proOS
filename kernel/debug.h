@@ -5,5 +5,6 @@ void debug_publish_memory_info(void);
 void debug_publish_task_list(void);
 void debug_publish_device_list(void);
 void debug_publish_all(void);
+void debug_trap_init(void);
 
 #endif

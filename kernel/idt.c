@@ -235,10 +235,19 @@ void isr_handler(struct regs *frame)
         if (int_no < 32)
         {
             vga_write_line(exception_messages[int_no]);
+            vga_write("Vector: ");
+            vga_write_hex32(int_no);
+            vga_write_line("");
+            vga_write("Error: ");
+            vga_write_hex32(frame->err_code);
+            vga_write_line("");
             vga_write("EIP: ");
             vga_write_hex32(frame->eip);
             vga_write(" CS: ");
             vga_write_hex32(frame->cs);
+            vga_write_line("");
+            vga_write("EFLAGS: ");
+            vga_write_hex32(frame->eflags);
             vga_write_line("");
         }
         vga_write_line("System halted.");

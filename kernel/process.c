@@ -131,7 +131,7 @@ static void log_process_event(const char *prefix, int pid)
 	if (!prefix)
 		return;
 
-	char buffer[64];
+	char buffer[32];
 	int idx = 0;
 
 	while (prefix[idx] && idx < (int)(sizeof(buffer) - 1))
@@ -142,9 +142,12 @@ static void log_process_event(const char *prefix, int pid)
 
 	if (idx < (int)(sizeof(buffer) - 1))
 	{
-		char num[16];
+		char num[12];
 		int num_len = int_to_string(pid, num);
-		for (int i = 0; i < num_len && idx < (int)(sizeof(buffer) - 1); ++i)
+		int room = (int)sizeof(buffer) - 1 - idx;
+		if (num_len > room)
+			num_len = room;
+		for (int i = 0; i < num_len; ++i)
 			buffer[idx++] = num[i];
 	}
 

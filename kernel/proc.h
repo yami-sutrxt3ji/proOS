@@ -120,9 +120,9 @@ struct process_info
     uint8_t sched_policy;
     uint32_t sched_weight;
     uint64_t sched_deadline;
-    uint64_t vruntime;
-    uint8_t sched_policy;
-    uint32_t sched_weight;
+   
+    
+    
     uint64_t sched_deadline;
     uint64_t vruntime;
     uint32_t time_slice_remaining;
